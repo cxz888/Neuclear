@@ -1,0 +1,26 @@
+[package]
+name = "kernel"
+version = "0.1.0"
+authors = ["cxz888 <idlercloud@gmail.com>"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bitflags = "1.2.1"
+buddy_system_allocator = "0.6"
+lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
+log = "0.4"
+riscv = { git = "https://github.com/rcore-os/riscv", features = ["inline-asm"] }
+lock_api = "=0.4.6"
+xmas-elf = "0.7.0"
+spin = "0.9"
+virtio-drivers = { git = "https://github.com/rcore-os/virtio-drivers", rev = "93f821c" }
+drivers = { path = "../drivers" }
+vfs = { path = "../vfs" }
+fat32 = { path = "../fat32" }
+
+[profile.release]
+debug = true
+opt-level = 0
+# opt-level = "s"

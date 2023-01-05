@@ -1,0 +1,10 @@
+**/.*/*
+!.github/*
+!.cargo/*
+
+**/target
+**/Cargo.lock
+
+tools
+workplace/
+res
