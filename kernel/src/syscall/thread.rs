@@ -1,9 +1,9 @@
 use crate::{
     mm::kernel_token,
-    task::{add_task, processor::current_task, TaskControlBlock},
+    task::{add_task, current_task, TaskControlBlock},
     trap::{trap_handler, TrapContext},
 };
-use alloc::{sync::Arc, vec};
+use alloc::sync::Arc;
 
 pub fn sys_thread_create(entry: usize, arg: usize) -> isize {
     let task = current_task().unwrap();
@@ -32,28 +32,6 @@ pub fn sys_thread_create(entry: usize, arg: usize) -> isize {
     new_task_trap_ctx.x[10] = arg;
 
     let mut inner = process.inner_exclusive_access();
-    let mutex_len = inner.mutex_list.len();
-    while inner.mutex_allocation.len() < new_task_tid + 1 {
-        inner.mutex_allocation.push(vec![0; mutex_len])
-    }
-    while inner.mutex_need.len() < new_task_tid + 1 {
-        inner.mutex_need.push(vec![0; mutex_len])
-    }
-    assert!(inner.mutex_allocation[new_task_tid]
-        .iter()
-        .all(|elem| *elem == 0));
-    assert!(inner.mutex_need[new_task_tid].iter().all(|elem| *elem == 0));
-    let sem_len = inner.sem_list.len();
-    while inner.sem_allocation.len() < new_task_tid + 1 {
-        inner.sem_allocation.push(vec![0; sem_len])
-    }
-    while inner.sem_need.len() < new_task_tid + 1 {
-        inner.sem_need.push(vec![0; sem_len])
-    }
-    assert!(inner.sem_allocation[new_task_tid]
-        .iter()
-        .all(|elem| *elem == 0));
-    assert!(inner.sem_need[new_task_tid].iter().all(|elem| *elem == 0));
     // add new thread to current process
     let tasks = &mut inner.tasks;
     while tasks.len() < new_task_tid + 1 {
@@ -99,10 +77,6 @@ pub fn sys_waittid(tid: usize) -> i32 {
     }
     if let Some(exit_code) = exit_code {
         // dealloc the exited thread
-        inner.mutex_allocation[tid].clear();
-        inner.mutex_need[tid].clear();
-        inner.sem_allocation[tid].clear();
-        inner.sem_need[tid].clear();
         inner.tasks[tid] = None;
         exit_code
     } else {

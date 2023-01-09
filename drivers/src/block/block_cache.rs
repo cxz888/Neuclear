@@ -1,6 +1,6 @@
 use super::{BlockDevice, BLOCK_SIZE};
-use alloc::collections::VecDeque;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use lazy_static::*;
 use spin::Mutex;
 
@@ -92,14 +92,12 @@ const BLOCK_CACHE_SIZE: usize = 16;
 
 // NOTE: 为什么用 VecDeque？
 pub struct BlockCacheManager {
-    queue: VecDeque<(u64, Arc<Mutex<BlockCache>>)>,
+    queue: Vec<(u64, Arc<Mutex<BlockCache>>)>,
 }
 
 impl BlockCacheManager {
     pub fn new() -> Self {
-        Self {
-            queue: VecDeque::new(),
-        }
+        Self { queue: Vec::new() }
     }
 
     pub fn get_block_cache(
@@ -119,14 +117,14 @@ impl BlockCacheManager {
                     .enumerate()
                     .find(|(_, pair)| Arc::strong_count(&pair.1) == 1)
                 {
-                    self.queue.drain(idx..=idx);
+                    self.queue.remove(idx);
                 } else {
                     panic!("Run out of BlockCache!");
                 }
             }
             // load block into mem and push back
             let block_cache = Arc::new(Mutex::new(BlockCache::new(block_id, block_device)));
-            self.queue.push_back((block_id, Arc::clone(&block_cache)));
+            self.queue.push((block_id, Arc::clone(&block_cache)));
             block_cache
         }
     }

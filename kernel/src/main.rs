@@ -29,6 +29,7 @@ mod config;
 mod driver_impl;
 mod fs;
 mod lang_items;
+mod loader;
 mod logging;
 mod mm;
 mod sbi;
@@ -59,7 +60,6 @@ pub fn rust_main() -> ! {
     logging::init();
     println!("[kernel] Hello, world!");
     mm::init();
-    mm::remap_test();
     trap::init();
     trap::enable_timer_interrupt();
     timer::set_next_trigger();
@@ -68,6 +68,6 @@ pub fn rust_main() -> ! {
     // task::kernel_stackful_coroutine_test();
     fs::list_apps();
     task::add_initproc();
-    task::processor::run_tasks();
+    task::run_tasks();
     panic!("Unreachable in rust_main!");
 }

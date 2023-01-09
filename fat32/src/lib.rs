@@ -4,11 +4,11 @@
 
 extern crate alloc;
 
-use alloc::{borrow::Cow, string::String, sync::Arc, vec::Vec};
+use alloc::{string::String, sync::Arc, vec::Vec};
 use drivers::{block_cache_sync_all, get_block_cache, BlockDevice, BLOCK_SIZE};
 use fatfs::{
-    Dir, DirEntry, Error, File, FileSystem, FsOptions, IoBase, LossyOemCpConverter,
-    NullTimeProvider, Read, Seek, SeekFrom, Write,
+    Dir, Error, File, FileSystem, FsOptions, IoBase, LossyOemCpConverter, NullTimeProvider, Read,
+    Seek, SeekFrom, Write,
 };
 use vfs::{Entry, Fs};
 
@@ -66,7 +66,7 @@ impl Entry for Fat32Entry {
     fn ls(&self) -> Result<Vec<String>, VfsError> {
         let dir = match self {
             Fat32Entry::Dir(dir) => dir,
-            Fat32Entry::File(entry) => {
+            Fat32Entry::File(_) => {
                 return Err(VfsError::InvalidType);
             }
         };
@@ -131,7 +131,7 @@ impl Entry for Fat32Entry {
         match self {
             Fat32Entry::Dir(_) => return false,
             Fat32Entry::File(file) => {
-                file.seek(SeekFrom::Start(0));
+                file.seek(SeekFrom::Start(0)).unwrap();
                 file.truncate().is_err()
             }
         }

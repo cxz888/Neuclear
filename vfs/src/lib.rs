@@ -3,9 +3,7 @@
 extern crate alloc;
 
 use alloc::string::String;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
-use drivers::BlockDevice;
 
 #[derive(Debug)]
 pub enum Error<T> {

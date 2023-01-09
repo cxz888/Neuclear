@@ -7,6 +7,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use bitflags::*;
+use riscv::register::satp;
 
 bitflags! {
     /// page table entry flags
@@ -48,15 +49,6 @@ impl PageTableEntry {
     pub fn is_valid(&self) -> bool {
         (self.flags() & PTEFlags::V) != PTEFlags::empty()
     }
-    pub fn readable(&self) -> bool {
-        (self.flags() & PTEFlags::R) != PTEFlags::empty()
-    }
-    pub fn writable(&self) -> bool {
-        (self.flags() & PTEFlags::W) != PTEFlags::empty()
-    }
-    pub fn executable(&self) -> bool {
-        (self.flags() & PTEFlags::X) != PTEFlags::empty()
-    }
 }
 
 /// page table structure
@@ -75,12 +67,12 @@ impl PageTable {
         }
     }
     /// Temporarily used to get arguments from user space.
-    pub fn from_token(satp: usize) -> Self {
+    pub fn from_token(token: usize) -> Self {
         const LOW_44_MASK: usize = (1 << 44) - 1;
         // RV64 中 `satp` 低 44 位是根页表的 PPN
         // frames 为空，意味着它只是临时使用，而不管理 frame 的资源
         Self {
-            root_ppn: PhysPageNum(satp & LOW_44_MASK),
+            root_ppn: PhysPageNum(token & LOW_44_MASK),
             frames: Vec::new(),
         }
     }
@@ -109,6 +101,7 @@ impl PageTable {
         let mut result: Option<&PageTableEntry> = None;
         for (i, &idx) in idxs.iter().enumerate() {
             let pte = &ppn.as_page_ptes_mut()[idx];
+            // NOTE: 这里是假定为 2 级页表了
             if i == 2 {
                 result = Some(pte);
                 break;
@@ -136,19 +129,19 @@ impl PageTable {
         self.find_pte(vpn).copied()
     }
     pub fn translate_va_to_pa(&self, va: VirtAddr) -> Option<PhysAddr> {
-        self.find_pte(va.floor()).map(|pte| {
+        self.find_pte(va.vpn_floor()).map(|pte| {
             let aligned_pa = pte.ppn().page_start();
             PhysAddr(aligned_pa.0 + va.page_offset())
         })
     }
-    pub fn translate_va_as_ref<T>(&self, va: VirtAddr) -> Option<&'static T> {
+    pub fn trans_va_as_ref<T>(&self, va: VirtAddr) -> Option<&'static T> {
         self.translate_va_to_pa(va).map(|pa| pa.as_ref())
     }
-    pub fn translate_va_as_mut<T>(&self, va: VirtAddr) -> Option<&'static mut T> {
+    pub fn trans_va_as_mut<T>(&self, va: VirtAddr) -> Option<&'static mut T> {
         self.translate_va_to_pa(va).map(|pa| pa.as_mut())
     }
     pub fn token(&self) -> usize {
-        8usize << 60 | self.root_ppn.0
+        (satp::Mode::Sv39 as usize) << 60 | self.root_ppn.0
     }
     pub fn translate_str(&self, ptr: *const u8) -> Option<String> {
         let mut string = String::new();
@@ -156,7 +149,7 @@ impl PageTable {
         // 逐字节地读入字符串，效率较低，但因为字符串可能跨页存在需要如此。
         // NOTE: 可以进一步优化，如一次读一页等
         loop {
-            let ch: u8 = *(self.translate_va_as_mut(VirtAddr(va))?);
+            let ch: u8 = *(self.trans_va_as_mut(VirtAddr(va))?);
             if ch == 0 {
                 break;
             } else {
@@ -176,7 +169,7 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
     let mut v = Vec::with_capacity(len / PAGE_SIZE + 2);
     while start < end {
         let start_va = VirtAddr(start);
-        let mut vpn = start_va.floor();
+        let mut vpn = start_va.vpn_floor();
         let mut ppn = page_table.translate(vpn).unwrap().ppn();
         vpn.0 += 1;
         let mut end_va = vpn.page_start();
@@ -189,19 +182,6 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
         start = end_va.0;
     }
     v
-}
-
-pub fn translated_str(satp: usize, ptr: *const u8) -> Option<String> {
-    let page_table = PageTable::from_token(satp);
-    page_table.translate_str(ptr)
-}
-
-pub fn translated_mut<T>(token: usize, ptr: *mut T) -> &'static mut T {
-    let page_table = PageTable::from_token(token);
-    page_table
-        .translate_va_to_pa(VirtAddr(ptr as usize))
-        .unwrap()
-        .as_mut()
 }
 
 /// An abstraction over a buffer passed from user space to kernel space

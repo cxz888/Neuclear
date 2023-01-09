@@ -16,7 +16,7 @@ mod context;
 
 use crate::config::TRAMPOLINE;
 use crate::syscall::syscall;
-use crate::task::processor::{current_trap_ctx_user_va, current_trap_cx, current_user_token};
+use crate::task::{current_process, current_trap_ctx_user_va, current_trap_cx, current_user_token};
 use crate::task::{exit_current_and_run_next, suspend_current_and_run_next};
 use crate::timer::{check_timer, set_next_trigger};
 use riscv::register::{
@@ -54,6 +54,11 @@ pub fn trap_handler() -> ! {
     set_kernel_trap_entry();
     let scause = scause::read();
     let stval = stval::read();
+    log::trace!(
+        "pid {}: pc-{:#x}",
+        current_process().pid.0,
+        current_trap_cx().sepc
+    );
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
             // jump to next instruction anyway
@@ -71,8 +76,8 @@ pub fn trap_handler() -> ! {
         | Trap::Exception(Exception::InstructionPageFault)
         | Trap::Exception(Exception::LoadFault)
         | Trap::Exception(Exception::LoadPageFault) => {
-            println!(
-                "[kernel] {:?} in application, bad addr = {:#x}, bad instruction = {:#x}, core dumped.",
+            log::error!(
+                "[kernel] {:?} in application, bad addr = {:#x}, bad inst pc = {:#x}, core dumped.",
                 scause.cause(),
                 stval,
                 current_trap_cx().sepc,
@@ -81,7 +86,7 @@ pub fn trap_handler() -> ! {
             exit_current_and_run_next(-2);
         }
         Trap::Exception(Exception::IllegalInstruction) => {
-            println!("[kernel] IllegalInstruction in application, core dumped.");
+            log::error!("[kernel] IllegalInstruction in application, core dumped.");
             // illegal instruction exit code
             exit_current_and_run_next(-3);
         }

@@ -60,16 +60,16 @@ impl PhysPageNum {
     /// 将 `src` 中的数据复制到该页中。
     ///
     /// 需要保证 `src` 与该页不相交且长度不超过页长
-    pub fn copy_from(&mut self, src: &[u8]) {
+    pub fn copy_from(&mut self, offset: usize, src: &[u8]) {
         let pa = self.page_start();
         unsafe {
-            let dst = core::slice::from_raw_parts_mut(pa.0 as _, src.len());
+            let dst = core::slice::from_raw_parts_mut((pa.0 + offset) as _, src.len());
             dst.copy_from_slice(src);
         };
     }
 }
 
-/// 虚拟地址。在 Sv39 页表机制中，虚拟地址 38~0 有效，39 及高位和 38 位一致。页号 27 位，业内偏移 12 位。
+/// 虚拟地址。在 Sv39 页表机制中，虚拟地址 38~0 有效，39 及高位和 38 位一致。页号 27 位，页内偏移 12 位。
 ///
 /// 由于 63~39 和 38 位保持一致，虚拟地址空间中只有 64 位的最低 256 GB 地址和最高 256 GB 地址有效。
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -81,14 +81,14 @@ impl VirtAddr {
         self.0 & (PAGE_SIZE - 1)
     }
     /// 向下取整页号
-    pub const fn floor(&self) -> VirtPageNum {
+    pub const fn vpn_floor(&self) -> VirtPageNum {
         VirtPageNum(self.0 / PAGE_SIZE)
     }
     pub const fn vpn(&self) -> VirtPageNum {
-        self.floor()
+        self.vpn_floor()
     }
     /// 向上取整页号
-    pub const fn ceil(&self) -> VirtPageNum {
+    pub const fn vpn_ceil(&self) -> VirtPageNum {
         VirtPageNum((self.0 - 1 + PAGE_SIZE) / PAGE_SIZE)
     }
 }

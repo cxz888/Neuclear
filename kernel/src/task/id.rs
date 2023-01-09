@@ -1,6 +1,6 @@
-use super::ProcessControlBlock;
+use super::{ProcessControlBlock, ProcessControlBlockInner};
 use crate::config::{KERNEL_STACK_SIZE, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE};
-use crate::mm::{MapPermission, PhysPageNum, VirtAddr, KERNEL_SPACE};
+use crate::mm::{MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use alloc::{
     sync::{Arc, Weak},
@@ -126,7 +126,7 @@ fn ustack_bottom_from_tid(ustack_base: usize, tid: usize) -> usize {
 
 impl TaskUserRes {
     pub fn new(
-        process: Arc<ProcessControlBlock>,
+        process: &Arc<ProcessControlBlock>,
         ustack_base: usize,
         alloc_user_res: bool,
     ) -> Self {
@@ -134,22 +134,22 @@ impl TaskUserRes {
         let task_user_res = Self {
             tid,
             ustack_base,
-            process: Arc::downgrade(&process),
+            process: Arc::downgrade(process),
         };
         if alloc_user_res {
-            task_user_res.alloc_user_res();
+            task_user_res.alloc_user_res(&mut process.inner_exclusive_access().memory_set);
         }
         task_user_res
     }
 
     /// 分配用户空间所需的资源，包括用户栈和 trap_ctx
-    pub fn alloc_user_res(&self) {
-        let process = self.process.upgrade().unwrap();
-        let mut process_inner = process.inner_exclusive_access();
+    pub fn alloc_user_res(&self, memory_set: &mut MemorySet) {
         // alloc user stack
         let ustack_bottom = ustack_bottom_from_tid(self.ustack_base, self.tid);
+        log::debug!("stack low addr: {:#x}", ustack_bottom);
         let ustack_top = ustack_bottom + USER_STACK_SIZE;
-        process_inner.memory_set.insert_framed_area(
+        log::debug!("stack high addr: {:#x}", ustack_top);
+        memory_set.insert_framed_area(
             VirtAddr(ustack_bottom),
             VirtAddr(ustack_top),
             MapPermission::R | MapPermission::W | MapPermission::U,
@@ -157,7 +157,7 @@ impl TaskUserRes {
         // alloc trap_ctx
         let trap_ctx_bottom = trap_cx_bottom_from_tid(self.tid);
         let trap_ctx_top = trap_ctx_bottom + PAGE_SIZE;
-        process_inner.memory_set.insert_framed_area(
+        memory_set.insert_framed_area(
             VirtAddr(trap_ctx_bottom),
             VirtAddr(trap_ctx_top),
             MapPermission::R | MapPermission::W,
@@ -200,12 +200,9 @@ impl TaskUserRes {
         trap_cx_bottom_from_tid(self.tid)
     }
 
-    pub fn trap_ctx_ppn(&self) -> PhysPageNum {
-        let process = self.process.upgrade().unwrap();
-        let process_inner = process.inner_exclusive_access();
+    pub fn trap_ctx_ppn(&self, pcb: &mut ProcessControlBlockInner) -> PhysPageNum {
         let trap_cx_bottom_va = VirtAddr(trap_cx_bottom_from_tid(self.tid));
-        process_inner
-            .memory_set
+        pcb.memory_set
             .translate(trap_cx_bottom_va.vpn())
             .unwrap()
             .ppn()

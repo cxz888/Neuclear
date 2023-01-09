@@ -1,7 +1,8 @@
 use super::id::RecycleAllocator;
 use super::{add_task, pid_alloc, PidHandle, TaskControlBlock};
 use crate::fs::{File, Stdin, Stdout};
-use crate::mm::{translated_mut, MemorySet, KERNEL_SPACE};
+use crate::loader::Loader;
+use crate::mm::{MemorySet, KERNEL_SPACE};
 use crate::sync::{Condvar, Mutex, Semaphore, UPSafeCell};
 use crate::trap::{trap_handler, TrapContext};
 use alloc::string::String;
@@ -24,20 +25,13 @@ pub struct ProcessControlBlockInner {
     pub parent: Weak<ProcessControlBlock>,
     pub children: Vec<Arc<ProcessControlBlock>>,
     pub exit_code: i32,
+    // pub brk: usize,
     pub fd_table: Vec<Option<Arc<dyn File + Send + Sync>>>,
     pub task_res_allocator: RecycleAllocator,
     pub tasks: Vec<Option<Arc<TaskControlBlock>>>, // 记长度为 n
     pub mutex_list: Vec<Option<Arc<dyn Mutex>>>,   // 记长度为 m_m
     pub sem_list: Vec<Option<Arc<Semaphore>>>,     // 记长度为 s_m
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
-    // NOTE: 也许某些结构可以整合到 TaskControlBlock 里去
-    pub mutex_need: Vec<Vec<usize>>,       // 长度为 n * m_m
-    pub mutex_available: Vec<usize>,       // 长度为 m_m
-    pub mutex_allocation: Vec<Vec<usize>>, // 长度为 n * m_m
-    pub sem_need: Vec<Vec<usize>>,         // 长度为 n * s_m
-    pub sem_available: Vec<usize>,         // 长度为 s_m
-    pub sem_allocation: Vec<Vec<usize>>,   // 长度为 n * s_m
-    pub detect_deadlock: bool,
 }
 
 impl ProcessControlBlockInner {
@@ -69,74 +63,6 @@ impl ProcessControlBlockInner {
 
     pub fn get_task(&self, tid: usize) -> Arc<TaskControlBlock> {
         self.tasks[tid].as_ref().unwrap().clone()
-    }
-
-    pub fn check_mutex_safety(&self) -> bool {
-        let num_task = self.tasks.len();
-        let mut finished = vec![false; num_task];
-        let mut work = self.mutex_available.clone();
-        loop {
-            let mut findable = false;
-            let mut can_alloc = false;
-            for tid in 0..num_task {
-                if !finished[tid] {
-                    findable = true;
-                    if self.mutex_need[tid]
-                        .iter()
-                        .zip(work.iter())
-                        .all(|(&need, &w)| need <= w)
-                    {
-                        for (w, &s) in work.iter_mut().zip(self.mutex_allocation[tid].iter()) {
-                            *w += s;
-                        }
-                        finished[tid] = true;
-                        can_alloc = true;
-                    }
-                }
-            }
-            if findable {
-                if !can_alloc {
-                    return false;
-                }
-            } else {
-                break;
-            }
-        }
-        true
-    }
-
-    pub fn check_semaphore_safety(&self) -> bool {
-        let num_task = self.tasks.len();
-        let mut finished = vec![false; num_task];
-        let mut work = self.sem_available.clone();
-        loop {
-            let mut findable = false;
-            let mut can_alloc = false;
-            for tid in 0..num_task {
-                if !finished[tid] {
-                    findable = true;
-                    if self.sem_need[tid]
-                        .iter()
-                        .zip(work.iter())
-                        .all(|(&need, &w)| need <= w)
-                    {
-                        for (w, &s) in work.iter_mut().zip(self.sem_allocation[tid].iter()) {
-                            *w += s;
-                        }
-                        finished[tid] = true;
-                        can_alloc = true;
-                    }
-                }
-            }
-            if findable {
-                if !can_alloc {
-                    return false;
-                }
-            } else {
-                break;
-            }
-        }
-        true
     }
 }
 
@@ -172,13 +98,6 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     sem_list: Vec::new(),
                     condvar_list: Vec::new(),
-                    mutex_need: vec![vec![]],
-                    mutex_available: Vec::new(),
-                    mutex_allocation: vec![vec![]],
-                    sem_need: vec![vec![]],
-                    sem_available: Vec::new(),
-                    sem_allocation: vec![vec![]],
-                    detect_deadlock: false,
                 })
             },
         });
@@ -240,13 +159,6 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     sem_list: Vec::new(),
                     condvar_list: Vec::new(),
-                    mutex_need: vec![vec![]],
-                    mutex_available: Vec::new(),
-                    mutex_allocation: vec![vec![]],
-                    sem_need: vec![vec![]],
-                    sem_available: Vec::new(),
-                    sem_allocation: vec![vec![]],
-                    detect_deadlock: parent.detect_deadlock,
                 })
             },
         });
@@ -282,59 +194,15 @@ impl ProcessControlBlock {
 
     /// Load a new elf to replace the original application address space and start execution
     /// Only support processes with a single thread.
-    pub fn exec(self: &Arc<Self>, elf_data: &[u8], args: Vec<String>) {
-        assert_eq!(self.inner_exclusive_access().thread_count(), 1);
+    pub fn exec(&self, path: &str, args: Vec<String>) {
+        let mut inner = self.inner_exclusive_access();
+        assert_eq!(inner.thread_count(), 1);
         // memory_set with elf program headers/trampoline/trap context/user stack
-        let (memory_set, ustack_base, entry_point) = MemorySet::from_elf(elf_data);
-        let new_token = memory_set.token();
-        // substitute memory_set
-        self.inner_exclusive_access().memory_set = memory_set;
-        // then we alloc user resource for main thread again
-        // since memory_set has been changed
-        let task = self.inner_exclusive_access().get_task(0);
-        let mut task_inner = task.inner_exclusive_access();
-        task_inner.res.as_mut().unwrap().ustack_base = ustack_base;
-        task_inner.res.as_mut().unwrap().alloc_user_res();
-        task_inner.trap_ctx_ppn = task_inner.res.as_mut().unwrap().trap_ctx_ppn();
-        // push arguments on user stack
-        let mut user_sp = task_inner.res.as_mut().unwrap().ustack_top();
-        user_sp -= (args.len() + 1) * core::mem::size_of::<usize>();
-        let argv_base = user_sp;
-        let mut argv: Vec<_> = (0..=args.len())
-            .map(|arg| {
-                translated_mut(
-                    new_token,
-                    (argv_base + arg * core::mem::size_of::<usize>()) as *mut usize,
-                )
-            })
-            .collect();
-        *argv[args.len()] = 0;
-        for i in 0..args.len() {
-            user_sp -= args[i].len() + 1;
-            *argv[i] = user_sp;
-            let mut p = user_sp;
-            for c in args[i].as_bytes() {
-                *translated_mut(new_token, p as *mut u8) = *c;
-                p += 1;
-            }
-            *translated_mut(new_token, p as *mut u8) = 0;
-        }
-        // make the user_sp aligned to 8B for k210 platform
-        user_sp -= user_sp % core::mem::size_of::<usize>();
-        // initialize trap_cx
-        let mut trap_cx = TrapContext::app_init_context(
-            entry_point,
-            user_sp,
-            KERNEL_SPACE.exclusive_access().token(),
-            task.kernel_stack.top(),
-            trap_handler as usize,
-        );
-        trap_cx.x[10] = args.len();
-        trap_cx.x[11] = argv_base;
-        *task_inner.trap_ctx() = trap_cx;
+        let loader = Loader;
+        loader.load(&mut inner, path, args).unwrap();
     }
 
-    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> isize {
+    pub fn _spawn(self: &Arc<Self>, elf_data: &[u8]) -> isize {
         let child = Self::new(elf_data);
 
         let mut parent_inner = self.inner_exclusive_access();
@@ -368,13 +236,6 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     sem_list: Vec::new(),
                     condvar_list: Vec::new(),
-                    mutex_need: vec![vec![]],
-                    mutex_available: Vec::new(),
-                    mutex_allocation: vec![vec![]],
-                    sem_need: vec![vec![]],
-                    sem_available: Vec::new(),
-                    sem_allocation: vec![vec![]],
-                    detect_deadlock: false,
                 })
             },
         })

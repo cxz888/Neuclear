@@ -11,34 +11,33 @@
 
 mod context;
 mod id;
-pub mod kthread;
+mod kthread;
 mod manager;
 mod process;
-pub mod processor;
-pub mod stackless_coroutine;
+mod processor;
+mod stackless_coroutine;
 mod switch;
-#[allow(clippy::module_inception)]
 mod tcb;
 
-use core::mem;
-
-pub use crate::syscall::process::TaskInfo;
-use crate::{
-    fs::{open_file, OpenFlags},
-    task::id::TaskUserRes,
-};
-use alloc::{sync::Arc, vec::Vec};
 pub use context::TaskContext;
-pub use id::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
+pub use id::{kstack_alloc, pid_alloc, KernelStack, PidHandle, TaskUserRes};
 pub use kthread::kernel_stackful_coroutine_test;
-use lazy_static::*;
 pub use manager::add_task;
-use manager::fetch_task;
-use process::ProcessControlBlock;
-use processor::{schedule, take_current_task};
+pub use process::{ProcessControlBlock, ProcessControlBlockInner};
+pub use processor::{
+    current_page_table, current_process, current_task, current_trap_ctx_user_va, current_trap_cx,
+    current_user_token, run_tasks,
+};
 pub use stackless_coroutine::kernel_stackless_coroutine_test;
-use switch::__switch;
 pub use tcb::{TaskControlBlock, TaskStatus};
+
+use crate::fs::{open_file, OpenFlags};
+use alloc::{sync::Arc, vec::Vec};
+use core::mem;
+use lazy_static::*;
+use manager::fetch_task;
+use processor::{schedule, take_current_task};
+use switch::__switch;
 
 pub fn block_current_and_run_next() {
     let task = take_current_task().unwrap();
@@ -139,7 +138,7 @@ lazy_static! {
     /// the name "initproc" may be changed to any other app name like "usertests",
     /// but we have user_shell, so we don't need to change it.
     pub static ref INITPROC: Arc<ProcessControlBlock> = {
-        let inode = open_file("busybox", OpenFlags::RDONLY).unwrap();
+        let inode = open_file("initproc", OpenFlags::RDONLY).unwrap();
         let v = inode.read_all();
         ProcessControlBlock::new(v.as_slice())
     };

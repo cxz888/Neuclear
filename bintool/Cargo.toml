@@ -1,11 +1,10 @@
 [package]
-name = "easy-fs"
+name = "bintool"
 version = "0.1.0"
-authors = ["Yifan Wu <shinbokuow@163.com>"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
-spin = "0.7.0"
+fatfs = { path = "../rust-fatfs" }
+xmas-elf = "0.9"

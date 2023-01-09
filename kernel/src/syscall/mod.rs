@@ -20,6 +20,7 @@ const SYSCALL_READ: usize = 63;
 const SYSCALL_WRITE: usize = 64;
 const SYSCALL_FSTAT: usize = 80;
 const SYSCALL_EXIT: usize = 93;
+const SYSCALL_SET_TID_ADDRESS: usize = 96;
 const SYSCALL_SLEEP: usize = 101;
 const SYSCALL_YIELD: usize = 124;
 const SYSCALL_GET_TIME: usize = 169;
@@ -40,7 +41,6 @@ const SYSCALL_MUTEX_LOCK: usize = 464;
 const SYSCALL_MUTEX_UNLOCK: usize = 466;
 const SYSCALL_SEMAPHORE_CREATE: usize = 467;
 const SYSCALL_SEMAPHORE_UP: usize = 468;
-const SYSCALL_ENABLE_DEADLOCK_DETECT: usize = 469;
 const SYSCALL_SEMAPHORE_DOWN: usize = 470;
 const SYSCALL_CONDVAR_CREATE: usize = 471;
 const SYSCALL_CONDVAR_SIGNAL: usize = 472;
@@ -51,7 +51,7 @@ pub mod process;
 mod sync;
 mod thread;
 
-use crate::fs::Stat;
+use crate::{fs::Stat, task::current_trap_cx};
 use fs::*;
 use process::*;
 use sync::*;
@@ -59,6 +59,7 @@ use thread::*;
 
 /// handle syscall exception with `syscall_id` and other arguments
 pub fn syscall(syscall_id: usize, args: [usize; 4]) -> isize {
+    log::trace!("syscall: {syscall_id}");
     match syscall_id {
         SYSCALL_DUP => sys_dup(args[0]),
         SYSCALL_LINKAT => sys_linkat(args[1] as *const u8, args[3] as *const u8),
@@ -70,6 +71,7 @@ pub fn syscall(syscall_id: usize, args: [usize; 4]) -> isize {
         SYSCALL_WRITE => sys_write(args[0], args[1] as *const u8, args[2]),
         SYSCALL_FSTAT => sys_fstat(args[0], args[1] as *mut Stat),
         SYSCALL_EXIT => sys_exit(args[0] as i32),
+        SYSCALL_SET_TID_ADDRESS => sys_set_tid_address(args[0] as _),
         SYSCALL_SLEEP => sys_sleep(args[0]),
         SYSCALL_YIELD => sys_yield(),
         SYSCALL_GETPID => sys_getpid(),
@@ -90,11 +92,13 @@ pub fn syscall(syscall_id: usize, args: [usize; 4]) -> isize {
         SYSCALL_MUTEX_UNLOCK => sys_mutex_unlock(args[0]),
         SYSCALL_SEMAPHORE_CREATE => sys_semaphore_create(args[0]),
         SYSCALL_SEMAPHORE_UP => sys_semaphore_up(args[0]),
-        SYSCALL_ENABLE_DEADLOCK_DETECT => sys_enable_deadlock_detect(args[0]),
         SYSCALL_SEMAPHORE_DOWN => sys_semaphore_down(args[0]),
         SYSCALL_CONDVAR_CREATE => sys_condvar_create(args[0]),
         SYSCALL_CONDVAR_SIGNAL => sys_condvar_signal(args[0]),
         SYSCALL_CONDVAR_WAIT => sys_condvar_wait(args[0], args[1]),
-        _ => panic!("Unsupported syscall_id: {}", syscall_id),
+        _ => {
+            log::error!("[kernel] bad inst pc = {:#x}", current_trap_cx().sepc,);
+            panic!("Unsupported syscall_id: {}", syscall_id);
+        }
     }
 }

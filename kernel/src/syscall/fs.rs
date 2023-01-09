@@ -2,14 +2,13 @@
 
 use crate::fs::make_pipe;
 // use crate::fs::open_file;
-use crate::fs::OpenFlags;
 use crate::fs::Stat;
 use crate::mm::translated_byte_buffer;
-use crate::mm::translated_mut;
-use crate::mm::translated_str;
+use crate::mm::PageTable;
 use crate::mm::UserBuffer;
-use crate::task::processor::current_process;
-use crate::task::processor::current_user_token;
+use crate::mm::VirtAddr;
+use crate::task::current_process;
+use crate::task::current_user_token;
 use alloc::sync::Arc;
 
 pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
@@ -46,7 +45,7 @@ pub fn sys_read(fd: usize, buf: *const u8, len: usize) -> isize {
     }
 }
 
-pub fn sys_open(path: *const u8, flags: u32) -> isize {
+pub fn sys_open(_path: *const u8, _flags: u32) -> isize {
     todo!()
     // let ret = || -> Option<isize> {
     //     let path = translated_str(current_user_token(), path)?;
@@ -80,8 +79,10 @@ pub fn sys_pipe(pipe: *mut usize) -> isize {
     inner.fd_table[read_fd] = Some(pipe_read);
     let write_fd = inner.alloc_fd();
     inner.fd_table[write_fd] = Some(pipe_write);
-    *translated_mut(token, pipe) = read_fd;
-    *translated_mut(token, unsafe { pipe.add(1) }) = write_fd;
+    let pt = PageTable::from_token(token);
+    *pt.trans_va_as_mut(VirtAddr(pipe as usize)).unwrap() = read_fd;
+    *pt.trans_va_as_mut(VirtAddr(unsafe { pipe.add(1) } as usize))
+        .unwrap() = write_fd;
     0
 }
 

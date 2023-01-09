@@ -1,5 +1,5 @@
 use crate::sync::{Mutex, UPSafeCell};
-use crate::task::processor::current_task;
+use crate::task::current_task;
 use crate::task::{add_task, block_current_and_run_next, TaskControlBlock};
 use alloc::{collections::VecDeque, sync::Arc};
 

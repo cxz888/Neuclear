@@ -12,6 +12,7 @@ use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use bitflags::bitflags;
+
 use lazy_static::*;
 use riscv::register::satp;
 
@@ -30,8 +31,9 @@ extern "C" {
 
 lazy_static! {
     /// a memory set instance through lazy_static! managing kernel space
-    pub static ref KERNEL_SPACE: Arc<UPSafeCell<MemorySet>> =
-        Arc::new(unsafe { UPSafeCell::new(MemorySet::new_kernel()) });
+    pub static ref KERNEL_SPACE: UPSafeCell<MemorySet> =unsafe {
+        UPSafeCell::new(MemorySet::new_kernel())
+    };
 }
 
 /// Get the token of the kernel memory space
@@ -71,6 +73,7 @@ impl MemorySet {
                 },
                 permission,
             ),
+            0,
             None,
         );
     }
@@ -85,10 +88,10 @@ impl MemorySet {
             self.areas.remove(idx);
         }
     }
-    fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
+    fn push(&mut self, mut map_area: MapArea, start_offset: usize, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
-            map_area.copy_data(&mut self.page_table, data);
+            map_area.copy_data(&mut self.page_table, start_offset, data);
         }
         self.areas.push(map_area);
     }
@@ -100,6 +103,7 @@ impl MemorySet {
             PTEFlags::R | PTEFlags::X,
         );
     }
+
     /// Without kernel stacks.
     pub fn new_kernel() -> Self {
         let mut memory_set = Self::new_bare();
@@ -122,6 +126,7 @@ impl MemorySet {
                 MapType::Identical,
                 MapPermission::R | MapPermission::X,
             ),
+            0,
             None,
         );
         log::info!("mapping .rodata section");
@@ -132,28 +137,32 @@ impl MemorySet {
                 MapType::Identical,
                 MapPermission::R,
             ),
+            0,
             None,
         );
-        log::info!("mapping .data section");
+        // .data 段和 .bss 段的访问限制相同，所以可以放到一起
+        log::info!("mapping .data and .bss section");
         memory_set.push(
             MapArea::new(
                 VirtAddr(sdata as usize),
-                VirtAddr(edata as usize),
-                MapType::Identical,
-                MapPermission::R | MapPermission::W,
-            ),
-            None,
-        );
-        log::info!("mapping .bss section");
-        memory_set.push(
-            MapArea::new(
-                VirtAddr(sbss_with_stack as usize),
                 VirtAddr(ebss as usize),
                 MapType::Identical,
                 MapPermission::R | MapPermission::W,
             ),
+            0,
             None,
         );
+        // log::info!("mapping .bss section");
+        // memory_set.push(
+        //     MapArea::new(
+        //         VirtAddr(sbss_with_stack as usize),
+        //         VirtAddr(ebss as usize),
+        //         MapType::Identical,
+        //         MapPermission::R | MapPermission::W,
+        //     ),
+        //     0,
+        //     None,
+        // );
         log::info!("mapping physical memory");
         memory_set.push(
             MapArea::new(
@@ -162,6 +171,7 @@ impl MemorySet {
                 MapType::Identical,
                 MapPermission::R | MapPermission::W,
             ),
+            0,
             None,
         );
         log::info!("mapping memory-mapped registers");
@@ -173,38 +183,54 @@ impl MemorySet {
                     MapType::Identical,
                     MapPermission::R | MapPermission::W,
                 ),
+                0,
                 None,
             );
         }
         memory_set
     }
-    /// Include sections in elf and trampoline and TrapContext and user stack,
-    /// also returns user_sp and entry point.
+    /// 根据 ELF 文件内容加载所有 section，并且映射 trampoline、TrapContext 和用户栈，
+    /// 同时也会返回 `user_sp`、`entry_point` 和 `brk` 的初始值
+    ///
+    /// ELF 标准参考 <https://www.sco.com/developers/gabi/latest/ch5.pheader.html>
+    /// 和 <https://github.com/riscv-non-isa/riscv-elf-psabi-doc/blob/master/riscv-elf.adoc>
     pub fn from_elf(elf_data: &[u8]) -> (Self, usize, usize) {
+        use goblin::elf::{
+            header::ET_EXEC,
+            program_header,
+            program_header::{PF_R, PF_W, PF_X, PT_LOAD},
+            Elf,
+        };
+
         let mut memory_set = Self::new_bare();
-        // map trampoline
         memory_set.map_trampoline();
-        // map program headers of elf, with U flag
-        let elf = xmas_elf::ElfFile::new(elf_data).unwrap();
-        let elf_header = elf.header;
-        let magic = elf_header.pt1.magic;
-        assert_eq!(magic, [0x7f, 0x45, 0x4c, 0x46], "invalid elf!");
-        let ph_count = elf_header.pt2.ph_count();
+
+        // 映射 ELF 中所有段
+
+        let elf = Elf::parse(elf_data).expect("should be valid elf");
+        assert!(elf.is_64);
+        log::debug!("e_flags:{:#b}", elf.header.e_flags);
+        assert_eq!(elf.header.e_type, ET_EXEC);
+        // 确定是 RISC-V 执行环境
+        assert_eq!(elf.header.e_machine, 243);
+
+        // 加载段
         let mut max_end_vpn = VirtPageNum(0);
-        for i in 0..ph_count {
-            let ph = elf.program_header(i).unwrap();
-            if ph.get_type().unwrap() == xmas_elf::program::Type::Load {
-                let start_va = VirtAddr(ph.virtual_addr() as usize);
-                let end_va = VirtAddr((ph.virtual_addr() + ph.mem_size()) as usize);
+        for ph in &elf.program_headers {
+            log::debug!("ph_type: {:?}", program_header::pt_to_str(ph.p_type));
+            log::debug!("ph range: {:#x?}", ph.vm_range());
+            if ph.p_type == PT_LOAD {
+                let start_va = VirtAddr(ph.p_vaddr as usize);
+                let start_offset = start_va.page_offset();
+                let end_va = VirtAddr((ph.p_vaddr + ph.p_memsz) as usize);
                 let mut map_perm = MapPermission::U;
-                let ph_flags = ph.flags();
-                if ph_flags.is_read() {
+                if ph.p_flags & PF_R != 0 {
                     map_perm |= MapPermission::R;
                 }
-                if ph_flags.is_write() {
+                if ph.p_flags & PF_W != 0 {
                     map_perm |= MapPermission::W;
                 }
-                if ph_flags.is_execute() {
+                if ph.p_flags & PF_X != 0 {
                     map_perm |= MapPermission::X;
                 }
                 let map_area = MapArea::new(
@@ -216,21 +242,16 @@ impl MemorySet {
                     map_perm,
                 );
                 max_end_vpn = map_area.vpn_range.end;
-                memory_set.push(
-                    map_area,
-                    Some(&elf.input[ph.offset() as usize..(ph.offset() + ph.file_size()) as usize]),
-                );
+                memory_set.push(map_area, start_offset, Some(&elf_data[ph.file_range()]));
+                log::debug!("map_perm: {:?}", map_perm);
             }
         }
+        log::info!("entry point: {:#x}", elf.entry);
         // We don't map user stack and trapframe here since they will be later
         // allocated through TaskControlBlock::new()
         let mut user_stack_top = max_end_vpn.page_start().0;
         user_stack_top += PAGE_SIZE;
-        (
-            memory_set,
-            user_stack_top,
-            elf.header.pt2.entry_point() as usize,
-        )
+        (memory_set, user_stack_top, elf.entry as usize)
     }
     /// Copy an identical user_space
     pub fn from_existed_user(user_space: &MemorySet) -> MemorySet {
@@ -240,7 +261,7 @@ impl MemorySet {
         // copy data sections/trap_context/user_stack
         for area in user_space.areas.iter() {
             let new_area = MapArea::from_another(area);
-            memory_set.push(new_area, None);
+            memory_set.push(new_area, 0, None);
             // copy data from another space
             for vpn in area.vpn_range.clone() {
                 let src_ppn = user_space.translate(vpn).unwrap().ppn();
@@ -303,8 +324,8 @@ impl MapArea {
         map_type: MapType,
         map_perm: MapPermission,
     ) -> Self {
-        let start_vpn: VirtPageNum = start_va.floor();
-        let end_vpn: VirtPageNum = end_va.ceil();
+        let start_vpn: VirtPageNum = start_va.vpn_floor();
+        let end_vpn: VirtPageNum = end_va.vpn_ceil();
         Self {
             vpn_range: start_vpn..end_vpn,
             map_type,
@@ -350,12 +371,23 @@ impl MapArea {
         }
     }
     /// 约定：当前逻辑段必须是 `Framed` 的。而且 `data` 的长度不得超过逻辑段长度。
-    pub fn copy_data(&mut self, page_table: &mut PageTable, data: &[u8]) {
+    pub fn copy_data(&mut self, page_table: &mut PageTable, start_offset: usize, data: &[u8]) {
         assert!(matches!(self.map_type, MapType::Framed { .. }));
+        assert!(start_offset < PAGE_SIZE);
         let mut curr_vpn = self.vpn_range.start;
-        for chunk in data.chunks(PAGE_SIZE) {
+
+        let (first_block, rest) = data.split_at((PAGE_SIZE - start_offset).min(data.len()));
+
+        page_table
+            .translate(curr_vpn)
+            .unwrap()
+            .ppn()
+            .copy_from(start_offset, first_block);
+        curr_vpn.0 += 1;
+
+        for chunk in rest.chunks(PAGE_SIZE) {
             let mut dst = page_table.translate(curr_vpn).unwrap().ppn();
-            dst.copy_from(chunk);
+            dst.copy_from(0, chunk);
             curr_vpn.0 += 1;
         }
     }
@@ -369,28 +401,4 @@ bitflags! {
         const X = 1 << 3;
         const U = 1 << 4;
     }
-}
-
-#[allow(unused)]
-pub fn remap_test() {
-    let mut kernel_space = KERNEL_SPACE.exclusive_access();
-    let mid_text = VirtAddr((stext as usize + etext as usize) / 2);
-    let mid_rodata = VirtAddr((srodata as usize + erodata as usize) / 2);
-    let mid_data = VirtAddr((sdata as usize + edata as usize) / 2);
-    assert!(!kernel_space
-        .page_table
-        .translate(mid_text.floor())
-        .unwrap()
-        .writable());
-    assert!(!kernel_space
-        .page_table
-        .translate(mid_rodata.floor())
-        .unwrap()
-        .writable());
-    assert!(!kernel_space
-        .page_table
-        .translate(mid_data.floor())
-        .unwrap()
-        .executable());
-    log::info!("remap_test passed!");
 }

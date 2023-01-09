@@ -34,6 +34,8 @@ pub struct TaskControlBlockInner {
     pub exit_code: Option<i32>,
     /// Tid and ustack will be deallocated when this goes None
     pub res: Option<TaskUserRes>,
+    /// 实际上是 `*const i32`，因为裸指针不 `Send` 就用 `usize` 了
+    pub clear_child_tid: usize,
 }
 
 /// Simple access to its internal fields
@@ -59,8 +61,8 @@ impl TaskControlBlock {
         ustack_base: usize,
         alloc_user_res: bool,
     ) -> Self {
-        let res = TaskUserRes::new(Arc::clone(process), ustack_base, alloc_user_res);
-        let trap_ctx_ppn = res.trap_ctx_ppn();
+        let res = TaskUserRes::new(process, ustack_base, alloc_user_res);
+        let trap_ctx_ppn = res.trap_ctx_ppn(&mut process.inner_exclusive_access());
         let kernel_stack = kstack_alloc();
         let kstack_top = kernel_stack.top();
         Self {
@@ -73,6 +75,7 @@ impl TaskControlBlock {
                     task_ctx: TaskContext::goto_trap_return(kstack_top),
                     task_status: TaskStatus::Ready,
                     exit_code: None,
+                    clear_child_tid: 0,
                 })
             },
         }
@@ -118,6 +121,7 @@ impl TaskControlBlock {
                     task_ctx: context,
                     task_status: TaskStatus::Ready,
                     exit_code: None,
+                    clear_child_tid: 0,
                 })
             },
         }
