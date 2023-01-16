@@ -90,7 +90,6 @@ impl Drop for BlockCache {
 /// Use a block cache of 16 blocks
 const BLOCK_CACHE_SIZE: usize = 16;
 
-// NOTE: 为什么用 VecDeque？
 pub struct BlockCacheManager {
     queue: Vec<(u64, Arc<Mutex<BlockCache>>)>,
 }

@@ -40,11 +40,6 @@ pub struct TaskControlBlockInner {
 
 /// Simple access to its internal fields
 impl TaskControlBlockInner {
-    /*
-    pub fn get_task_cx_ptr2(&self) -> *const usize {
-        &self.task_cx_ptr as *const usize
-    }
-    */
     pub fn trap_ctx(&mut self) -> &'static mut TrapContext {
         self.trap_ctx_ppn.as_mut()
     }
@@ -56,12 +51,8 @@ impl TaskControlBlockInner {
 }
 
 impl TaskControlBlock {
-    pub fn new(
-        process: &Arc<ProcessControlBlock>,
-        ustack_base: usize,
-        alloc_user_res: bool,
-    ) -> Self {
-        let res = TaskUserRes::new(process, ustack_base, alloc_user_res);
+    pub fn new(process: &Arc<ProcessControlBlock>, alloc_user_res: bool) -> Self {
+        let res = TaskUserRes::new(process, alloc_user_res);
         let trap_ctx_ppn = res.trap_ctx_ppn(&mut process.inner_exclusive_access());
         let kernel_stack = kstack_alloc();
         let kstack_top = kernel_stack.top();
@@ -90,41 +81,6 @@ impl TaskControlBlock {
         let process = self.process.upgrade().unwrap();
         let inner = process.inner_exclusive_access();
         inner.memory_set.token()
-    }
-
-    pub fn create_kthread(f: fn()) -> Self {
-        use crate::mm::PhysAddr;
-        let process = ProcessControlBlock::kernel_process();
-        let process = Arc::downgrade(&process);
-
-        let kernelstack = crate::task::id::KStack::new();
-        let kstack_top = kernelstack.top();
-
-        let mut context = TaskContext::zero_init();
-        let context_addr = &context as *const TaskContext as usize;
-        let pa = PhysAddr(context_addr);
-        let context_ppn = pa.floor();
-
-        context.ra = f as usize;
-        context.sp = kstack_top;
-
-        //println!("context ppn :{:#x?}", context_ppn);
-
-        Self {
-            process,
-            kernel_stack: KernelStack(kstack_top),
-            //kstack,
-            inner: unsafe {
-                UPSafeCell::new(TaskControlBlockInner {
-                    res: None,
-                    trap_ctx_ppn: context_ppn,
-                    task_ctx: context,
-                    task_status: TaskStatus::Ready,
-                    exit_code: None,
-                    clear_child_tid: 0,
-                })
-            },
-        }
     }
 }
 

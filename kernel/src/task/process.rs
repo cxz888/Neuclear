@@ -1,41 +1,42 @@
-use super::id::RecycleAllocator;
-use super::{add_task, pid_alloc, PidHandle, TaskControlBlock};
-use crate::fs::{File, Stdin, Stdout};
-use crate::loader::Loader;
-use crate::mm::{MemorySet, KERNEL_SPACE};
-use crate::sync::{Condvar, Mutex, Semaphore, UPSafeCell};
-use crate::trap::{trap_handler, TrapContext};
-use alloc::string::String;
-use alloc::sync::{Arc, Weak};
-use alloc::vec;
-use alloc::vec::Vec;
+use super::{add_task, id::RecycleAllocator, pid_alloc, PidHandle, TaskControlBlock};
+use crate::{
+    error::Result,
+    fs::{File, Stdin, Stdout},
+    loader::Loader,
+    mm::{MemorySet, KERNEL_SPACE},
+    sync::{Condvar, Mutex, Semaphore, UPSafeCell},
+    trap::{trap_handler, TrapContext},
+};
+use alloc::{
+    string::String,
+    sync::{Arc, Weak},
+    vec,
+    vec::Vec,
+};
 use core::cell::RefMut;
+use goblin::elf::Elf;
 
 pub struct ProcessControlBlock {
-    // immutable
     pub pid: PidHandle,
-    // mutable
     inner: UPSafeCell<ProcessControlBlockInner>,
 }
 
-// LAB5 HINT: you may add data structures for deadlock detection here
 pub struct ProcessControlBlockInner {
     pub is_zombie: bool,
     pub memory_set: MemorySet,
     pub parent: Weak<ProcessControlBlock>,
     pub children: Vec<Arc<ProcessControlBlock>>,
     pub exit_code: i32,
-    // pub brk: usize,
+    pub brk: usize,
     pub fd_table: Vec<Option<Arc<dyn File + Send + Sync>>>,
     pub task_res_allocator: RecycleAllocator,
-    pub tasks: Vec<Option<Arc<TaskControlBlock>>>, // 记长度为 n
-    pub mutex_list: Vec<Option<Arc<dyn Mutex>>>,   // 记长度为 m_m
-    pub sem_list: Vec<Option<Arc<Semaphore>>>,     // 记长度为 s_m
+    pub tasks: Vec<Option<Arc<TaskControlBlock>>>,
+    pub mutex_list: Vec<Option<Arc<dyn Mutex>>>,
+    pub sem_list: Vec<Option<Arc<Semaphore>>>,
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
 }
 
 impl ProcessControlBlockInner {
-    #[allow(unused)]
     pub fn user_token(&self) -> usize {
         self.memory_set.token()
     }
@@ -67,17 +68,18 @@ impl ProcessControlBlockInner {
 }
 
 impl ProcessControlBlock {
-    pub fn inner_exclusive_access(&self) -> RefMut<'_, ProcessControlBlockInner> {
+    pub fn inner_exclusive_access(&self) -> RefMut<ProcessControlBlockInner> {
         self.inner.exclusive_access()
     }
 
     pub fn new(elf_data: &[u8]) -> Arc<Self> {
         // memory_set with elf program headers/trampoline/trap context/user stack
-        let (memory_set, ustack_base, entry_point) = MemorySet::from_elf(elf_data);
+        let elf = Elf::parse(elf_data).expect("should be valid elf");
+        let (memory_set, init_brk, entry_point) = MemorySet::from_elf(&elf, elf_data);
         // allocate a pid
-        let pid_handle = pid_alloc();
+        let pid = pid_alloc();
         let process = Arc::new(Self {
-            pid: pid_handle,
+            pid,
             inner: unsafe {
                 UPSafeCell::new(ProcessControlBlockInner {
                     is_zombie: false,
@@ -85,6 +87,7 @@ impl ProcessControlBlock {
                     parent: Weak::new(),
                     children: Vec::new(),
                     exit_code: 0,
+                    brk: init_brk,
                     fd_table: vec![
                         // 0 -> stdin
                         Some(Arc::new(Stdin)),
@@ -101,15 +104,15 @@ impl ProcessControlBlock {
                 })
             },
         });
-        // create a main thread, we should allocate ustack and trap_cx here
-        let task = Arc::new(TaskControlBlock::new(&process, ustack_base, true));
-        // prepare trap_cx of main thread
+        // create a main thread, we should allocate ustack and trap_ctx here
+        let task = Arc::new(TaskControlBlock::new(&process, true));
+        // prepare trap_ctx of main thread
         let mut task_inner = task.inner_exclusive_access();
-        let trap_cx = task_inner.trap_ctx();
-        let ustack_top = task_inner.res.as_ref().unwrap().ustack_top();
+        let trap_ctx = task_inner.trap_ctx();
+        let ustack_top = task_inner.res.as_ref().unwrap().user_stack_high_addr();
         let kernel_stack_top = task.kernel_stack.top();
         drop(task_inner);
-        *trap_cx = TrapContext::app_init_context(
+        *trap_ctx = TrapContext::app_init_context(
             entry_point,
             ustack_top,
             KERNEL_SPACE.exclusive_access().token(),
@@ -128,15 +131,15 @@ impl ProcessControlBlock {
     /// Fork from parent to child
     /// Only support processes with a single thread.
     pub fn fork(self: &Arc<Self>) -> Arc<Self> {
-        let mut parent = self.inner_exclusive_access();
-        assert_eq!(parent.thread_count(), 1);
-        // clone parent's memory_set completely including trampoline/ustacks/trap_cxs
-        let memory_set = MemorySet::from_existed_user(&parent.memory_set);
+        let mut parent_inner = self.inner_exclusive_access();
+        assert_eq!(parent_inner.thread_count(), 1);
+        // clone parent's memory_set completely including trampoline/ustacks/trap_ctxs
+        let memory_set = MemorySet::from_existed_user(&parent_inner.memory_set);
         // alloc a pid
         let pid = pid_alloc();
         // copy fd table
         let mut new_fd_table: Vec<Option<Arc<dyn File + Send + Sync>>> = Vec::new();
-        for fd in parent.fd_table.iter() {
+        for fd in parent_inner.fd_table.iter() {
             if let Some(file) = fd {
                 new_fd_table.push(Some(file.clone()));
             } else {
@@ -153,6 +156,7 @@ impl ProcessControlBlock {
                     parent: Arc::downgrade(self),
                     children: Vec::new(),
                     exit_code: 0,
+                    brk: parent_inner.brk,
                     fd_table: new_fd_table,
                     tasks: Vec::new(),
                     task_res_allocator: RecycleAllocator::new(),
@@ -163,18 +167,11 @@ impl ProcessControlBlock {
             },
         });
         // add child
-        parent.children.push(Arc::clone(&child));
+        parent_inner.children.push(Arc::clone(&child));
         // create main thread of child process
         let task = Arc::new(TaskControlBlock::new(
             &child,
-            parent
-                .get_task(0)
-                .inner_exclusive_access()
-                .res
-                .as_ref()
-                .unwrap()
-                .ustack_base(),
-            // here we do not allocate trap_cx or ustack again
+            // here we do not allocate trap_ctx or ustack again
             // but mention that we allocate a new kernel_stack here
             false,
         ));
@@ -182,7 +179,7 @@ impl ProcessControlBlock {
         let mut child_inner = child.inner_exclusive_access();
         child_inner.tasks.push(Some(Arc::clone(&task)));
         drop(child_inner);
-        // modify kernel_stack_top in trap_cx of this thread
+        // modify kernel_stack_top in trap_ctx of this thread
         let mut task_inner = task.inner_exclusive_access();
         let trap_ctx = task_inner.trap_ctx();
         trap_ctx.kernel_sp = task.kernel_stack.top();
@@ -194,12 +191,11 @@ impl ProcessControlBlock {
 
     /// Load a new elf to replace the original application address space and start execution
     /// Only support processes with a single thread.
-    pub fn exec(&self, path: &str, args: Vec<String>) {
+    pub fn exec(&self, path: &str, args: Vec<String>) -> Result<()> {
         let mut inner = self.inner_exclusive_access();
         assert_eq!(inner.thread_count(), 1);
         // memory_set with elf program headers/trampoline/trap context/user stack
-        let loader = Loader;
-        loader.load(&mut inner, path, args).unwrap();
+        Loader::load(&mut inner, path, args)
     }
 
     pub fn _spawn(self: &Arc<Self>, elf_data: &[u8]) -> isize {
@@ -215,29 +211,8 @@ impl ProcessControlBlock {
         child.pid.0 as isize
     }
 
+    #[inline]
     pub fn pid(&self) -> usize {
         self.pid.0
-    }
-
-    pub fn kernel_process() -> Arc<Self> {
-        let memory_set = MemorySet::kernel_copy();
-        Arc::new(ProcessControlBlock {
-            pid: super::pid_alloc(),
-            inner: unsafe {
-                UPSafeCell::new(ProcessControlBlockInner {
-                    is_zombie: false,
-                    memory_set,
-                    parent: Weak::new(),
-                    children: Vec::new(),
-                    exit_code: 0,
-                    fd_table: Vec::new(),
-                    task_res_allocator: RecycleAllocator::new(),
-                    tasks: Vec::new(),
-                    mutex_list: Vec::new(),
-                    sem_list: Vec::new(),
-                    condvar_list: Vec::new(),
-                })
-            },
-        })
     }
 }

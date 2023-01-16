@@ -20,6 +20,7 @@
 #![feature(panic_info_message)]
 #![feature(alloc_error_handler)]
 #![feature(step_trait)]
+#![feature(let_else)]
 
 extern crate alloc;
 
@@ -38,6 +39,8 @@ mod syscall;
 mod task;
 mod timer;
 mod trap;
+
+pub mod error;
 
 core::arch::global_asm!(include_str!("entry.asm"));
 

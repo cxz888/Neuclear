@@ -13,3 +13,14 @@
 res/abi386-4.pdf 中的 Figure 3-31 也有比较粗略的描述。
 
 `auxv` 即辅助向量，可以参考 <https://blog.csdn.net/choumin/article/details/111385498>
+
+注意，辅助向量要尽早完成，因为 `PAGE_SIZE` 等是要参考它的。
+
+> 如果遇到 mmap 时 len==0 的情况，可能是 auxv 没有处理的原因。
+> 在 Linux 现行规范中，len==0 的情况是错误的
+
+## Todo List
+
+- [ ] Cow 虚拟页
+- [ ] 页面置换
+- [ ] 信号机制

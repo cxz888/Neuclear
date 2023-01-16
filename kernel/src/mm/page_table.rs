@@ -1,8 +1,11 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
 use crate::config::PAGE_SIZE;
+use crate::syscall::MmapProt;
 
-use super::{frame_alloc, FrameTracker, PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
+use super::{
+    frame_alloc, FrameTracker, MapPermission, PhysAddr, PhysPageNum, VirtAddr, VirtPageNum,
+};
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -47,7 +50,7 @@ impl PageTableEntry {
         PTEFlags::from_bits_truncate(self.bits as u8)
     }
     pub fn is_valid(&self) -> bool {
-        (self.flags() & PTEFlags::V) != PTEFlags::empty()
+        self.flags().contains(PTEFlags::V)
     }
 }
 
@@ -57,7 +60,7 @@ pub struct PageTable {
     frames: Vec<FrameTracker>,
 }
 
-/// Assume that it won't oom when creating/mapping.
+/// 假定创建和映射时不会导致内存不足
 impl PageTable {
     pub fn new() -> Self {
         let frame = frame_alloc().unwrap();
@@ -66,7 +69,7 @@ impl PageTable {
             frames: vec![frame],
         }
     }
-    /// Temporarily used to get arguments from user space.
+    /// 从 token 生成临时页表。用于在内核态根据用户提供的虚地址访问用户数据。
     pub fn from_token(token: usize) -> Self {
         const LOW_44_MASK: usize = (1 << 44) - 1;
         // RV64 中 `satp` 低 44 位是根页表的 PPN
@@ -76,14 +79,16 @@ impl PageTable {
             frames: Vec::new(),
         }
     }
+    /// 找到 `vpn` 对应的叶子页表项。注意不保证该页表项 valid，需调用方自己修改
     fn find_pte_create(&mut self, vpn: VirtPageNum) -> Option<&mut PageTableEntry> {
         let idxs = vpn.indexes();
         let mut ppn = self.root_ppn;
-        let mut result: Option<&mut PageTableEntry> = None;
+        let mut ret: Option<&mut PageTableEntry> = None;
         for (i, &idx) in idxs.iter().enumerate() {
             let pte = &mut ppn.as_page_ptes_mut()[idx];
+            // 这里假定为 3 级页表
             if i == 2 {
-                result = Some(pte);
+                ret = Some(pte);
                 break;
             }
             if !pte.is_valid() {
@@ -93,53 +98,56 @@ impl PageTable {
             }
             ppn = pte.ppn();
         }
-        result
+        ret
     }
+    /// 找到 `vpn` 对应的叶子页表项。注意，该页表项必须是 valid 的。
     fn find_pte(&self, vpn: VirtPageNum) -> Option<&PageTableEntry> {
         let idxs = vpn.indexes();
         let mut ppn = self.root_ppn;
-        let mut result: Option<&PageTableEntry> = None;
-        for (i, &idx) in idxs.iter().enumerate() {
-            let pte = &ppn.as_page_ptes_mut()[idx];
-            // NOTE: 这里是假定为 2 级页表了
-            if i == 2 {
-                result = Some(pte);
-                break;
-            }
+        let mut ret = None;
+        for idx in idxs {
+            let pte = &ppn.as_page_ptes()[idx];
             if !pte.is_valid() {
                 return None;
             }
+            ret = Some(pte);
             ppn = pte.ppn();
         }
-        result
+        ret
     }
-    #[allow(unused)]
     pub fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {
         let pte = self.find_pte_create(vpn).unwrap();
-        assert!(!pte.is_valid(), "vpn {:?} is mapped before mapping", vpn);
+        assert!(
+            !pte.is_valid(),
+            "vpn {:#x?} is mapped before mapping",
+            vpn.0
+        );
         *pte = PageTableEntry::new(ppn, flags | PTEFlags::V);
     }
-    #[allow(unused)]
     pub fn unmap(&mut self, vpn: VirtPageNum) {
         let pte = self.find_pte_create(vpn).unwrap();
         assert!(pte.is_valid(), "vpn {:?} is invalid before unmapping", vpn);
         *pte = PageTableEntry::empty();
     }
+    #[inline]
     pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
         self.find_pte(vpn).copied()
     }
     pub fn translate_va_to_pa(&self, va: VirtAddr) -> Option<PhysAddr> {
         self.find_pte(va.vpn_floor()).map(|pte| {
             let aligned_pa = pte.ppn().page_start();
-            PhysAddr(aligned_pa.0 + va.page_offset())
+            aligned_pa.add(va.page_offset())
         })
     }
+    #[inline]
     pub fn trans_va_as_ref<T>(&self, va: VirtAddr) -> Option<&'static T> {
         self.translate_va_to_pa(va).map(|pa| pa.as_ref())
     }
+    #[inline]
     pub fn trans_va_as_mut<T>(&self, va: VirtAddr) -> Option<&'static mut T> {
         self.translate_va_to_pa(va).map(|pa| pa.as_mut())
     }
+    #[inline]
     pub fn token(&self) -> usize {
         (satp::Mode::Sv39 as usize) << 60 | self.root_ppn.0
     }

@@ -1,17 +1,33 @@
 //! File and filesystem-related syscalls
 
-use crate::fs::make_pipe;
-// use crate::fs::open_file;
-use crate::fs::Stat;
-use crate::mm::translated_byte_buffer;
-use crate::mm::PageTable;
-use crate::mm::UserBuffer;
-use crate::mm::VirtAddr;
-use crate::task::current_process;
-use crate::task::current_user_token;
+use crate::{
+    error::{code, Result},
+    fs::{make_pipe, Stat},
+    mm::{translated_byte_buffer, PageTable, UserBuffer, VirtAddr},
+    task::{current_page_table, current_process, current_user_token},
+};
 use alloc::sync::Arc;
 
-pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
+/// 操纵某个文件的底层设备。目前只进行错误检验
+///
+/// 参数：
+/// - `fd` 文件描述符
+/// - `cmd` 请求码，其含义完全由底层设备决定
+/// - `arg` 额外参数
+pub fn sys_ioctl(fd: usize, _cmd: usize, arg: *mut usize) -> Result {
+    if !matches!(
+        current_process().inner_exclusive_access().fd_table.get(fd),
+        Some(Some(_))
+    ) {
+        return Err(code::EBADF);
+    }
+    if let None = current_page_table().translate_va_to_pa(VirtAddr(arg as usize)) {
+        return Err(code::EFAULT);
+    }
+    Ok(0)
+}
+
+pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> Result {
     let process = current_process();
     let inner = process.inner_exclusive_access();
 
@@ -22,13 +38,14 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
         // write 有可能导致阻塞与任务切换
         drop(inner);
         drop(process);
-        file.write(UserBuffer::new(translated_byte_buffer(token, buf, len))) as isize
+        let nwrite = file.write(UserBuffer::new(translated_byte_buffer(token, buf, len)));
+        Ok(nwrite as isize)
     } else {
-        -1
+        Err(code::TEMP)
     }
 }
 
-pub fn sys_read(fd: usize, buf: *const u8, len: usize) -> isize {
+pub fn sys_read(fd: usize, buf: *const u8, len: usize) -> Result {
     let process = current_process();
     let inner = process.inner_exclusive_access();
 
@@ -39,9 +56,10 @@ pub fn sys_read(fd: usize, buf: *const u8, len: usize) -> isize {
         // read 有可能导致阻塞与任务切换
         drop(inner);
         drop(process);
-        file.read(UserBuffer::new(translated_byte_buffer(token, buf, len))) as isize
+        let nread = file.read(UserBuffer::new(translated_byte_buffer(token, buf, len)));
+        Ok(nread as isize)
     } else {
-        -1
+        Err(code::TEMP)
     }
 }
 
@@ -86,18 +104,18 @@ pub fn sys_pipe(pipe: *mut usize) -> isize {
     0
 }
 
-pub fn sys_dup(fd: usize) -> isize {
+pub fn sys_dup(fd: usize) -> Result<isize> {
     let process = current_process();
     let mut inner = process.inner_exclusive_access();
     if fd >= inner.fd_table.len() {
-        return -1;
+        return Err(code::TEMP);
     }
     if inner.fd_table[fd].is_none() {
-        return -1;
+        return Err(code::TEMP);
     }
     let new_fd = inner.alloc_fd();
     inner.fd_table[new_fd] = Some(Arc::clone(inner.fd_table[fd].as_ref().unwrap()));
-    new_fd as isize
+    Ok(new_fd as isize)
 }
 
 pub fn sys_fstat(_fd: usize, _st: *mut Stat) -> isize {

@@ -1,31 +1,34 @@
 //! Process management syscalls
 
-use crate::config::MAX_SYSCALL_NUM;
-use crate::mm::{PageTable, VirtAddr};
-use crate::task::{current_page_table, current_process, current_task};
-use crate::task::{exit_current_and_run_next, suspend_current_and_run_next, TaskStatus};
-use crate::timer::get_time_us;
-use alloc::string::String;
-use alloc::sync::Arc;
-use alloc::vec::Vec;
+use crate::{
+    config::MAX_SYSCALL_NUM,
+    error::{code, Result},
+    mm::{PageTable, VirtAddr},
+    syscall::flags::{MmapFlags, MmapProt},
+    task::{
+        current_page_table, current_process, current_task, exit_current_and_run_next,
+        suspend_current_and_run_next, TaskStatus,
+    },
+    timer::get_time_us,
+};
+use alloc::{string::String, sync::Arc, vec::Vec};
 
 pub fn sys_exit(exit_code: i32) -> ! {
-    // debug!("[kernel] Application exited with code {}", exit_code);
-    exit_current_and_run_next(exit_code);
+    exit_current_and_run_next(exit_code)
 }
 
 /// current task gives up resources for other tasks
-pub fn sys_yield() -> isize {
+pub fn sys_yield() -> Result {
     suspend_current_and_run_next();
-    0
+    Ok(0)
 }
 
-pub fn sys_getpid() -> isize {
-    current_task().unwrap().process.upgrade().unwrap().pid() as isize
+pub fn sys_getpid() -> Result {
+    Ok(current_task().unwrap().process.upgrade().unwrap().pid() as isize)
 }
 
 /// Syscall Fork which returns 0 for child process and child_pid for parent process
-pub fn sys_fork() -> isize {
+pub fn sys_fork() -> Result {
     let current_process = current_process();
     let new_process = current_process.fork();
     let new_pid = new_process.pid();
@@ -36,83 +39,63 @@ pub fn sys_fork() -> isize {
     // we do not have to move to next instruction since we have done it before
     // for child process, fork returns 0
     trap_ctx.x[10] = 0;
-    new_pid as isize
+    Ok(new_pid as isize)
 }
 
-/// 功能：将当前进程的地址空间清空并加载一个特定的可执行文件，返回用户态后开始它的执行。
+/// 将当前进程的地址空间清空并加载一个特定的可执行文件，返回用户态后开始它的执行。返回参数个数
 ///
-/// 参数：
-/// - 字符串 path 给出了要加载的可执行文件的名字；
-/// - 字符串数组 args 给出了参数列表。其最后一个元素必须是一个 0
-///
-/// 返回值：如果出错的话（如找不到名字相符的可执行文件）则返回 -1。
-///
-/// 注意：path 必须以 "\0" 结尾，否则内核将无法确定其长度
-///
-/// syscall ID：221
-pub fn sys_exec(path: *const u8, mut args: *const usize) -> isize {
+/// ## 参数：
+/// - `path` 给出了要加载的可执行文件的名字，必须以 `\0` 结尾
+/// - `args` 给出了参数列表。其最后一个元素必须是一个 0
+pub fn sys_exec(path: *const u8, mut args: *const usize) -> Result {
     let page_table = current_page_table();
 
-    let ret = || -> Option<isize> {
-        let path = page_table.translate_str(path)?;
-        let mut args_vec: Vec<String> = Vec::new();
-        // 收集参数列表
-        loop {
-            let &arg_str_ptr = page_table.trans_va_as_ref::<usize>(VirtAddr(args as usize))?;
-            if arg_str_ptr == 0 {
-                break;
-            }
-            args_vec.push(page_table.translate_str(arg_str_ptr as *const u8)?);
-            unsafe {
-                args = args.add(1);
-            }
+    let path = page_table.translate_str(path).ok_or(code::TEMP)?;
+    let mut args_vec: Vec<String> = Vec::new();
+    // 收集参数列表
+    loop {
+        let &arg_str_ptr = page_table
+            .trans_va_as_ref::<usize>(VirtAddr(args as usize))
+            .ok_or(code::TEMP)?;
+        if arg_str_ptr == 0 {
+            break;
         }
-        let process = current_process();
-        let argc = args_vec.len();
-        process.exec(&path, args_vec);
-        Some(argc as isize)
-    }();
-    ret.unwrap_or(-1)
+        args_vec.push(
+            page_table
+                .translate_str(arg_str_ptr as *const u8)
+                .ok_or(code::TEMP)?,
+        );
+        unsafe {
+            args = args.add(1);
+        }
+    }
+    let process = current_process();
+    let argc = args_vec.len();
+    process.exec(&path, args_vec)?;
+    Ok(argc as isize)
 }
 
 /// If there is not a child process whose pid is same as given, return -1.
 /// Else if there is a child process but it is still running, return -2.
-pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
+pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> Result {
     let process = current_process();
-    // find a child process
 
-    // ---- access current TCB exclusively
+    // find a child process
     let mut inner = process.inner_exclusive_access();
-    if !inner
-        .children
-        .iter()
-        .any(|p| pid == -1 || pid as usize == p.pid())
-    {
-        return -1;
-        // ---- release current PCB
-    }
     let pair = inner.children.iter().enumerate().find(|(_, p)| {
-        // ++++ temporarily access child PCB lock exclusively
         p.inner_exclusive_access().is_zombie && (pid == -1 || pid as usize == p.pid())
-        // ++++ release child PCB
     });
-    if let Some((idx, _)) = pair {
-        let child = inner.children.remove(idx);
-        // confirm that child will be deallocated after removing from children list
-        assert_eq!(Arc::strong_count(&child), 1);
-        let found_pid = child.pid();
-        // ++++ temporarily access child TCB exclusively
-        let exit_code = child.inner_exclusive_access().exit_code;
-        // ++++ release child PCB
-        let page_table = PageTable::from_token(inner.memory_set.token());
-        *page_table
-            .trans_va_as_mut(VirtAddr(exit_code_ptr as usize))
-            .unwrap() = exit_code;
-        found_pid as isize
-    } else {
-        -2
-    }
-    // ---- release current PCB lock automatically
+    let (idx, _) = pair.ok_or(code::EAGAIN)?;
+    let child = inner.children.remove(idx);
+    // confirm that child will be deallocated after removing from children list
+    assert_eq!(Arc::strong_count(&child), 1);
+    let found_pid = child.pid();
+    let exit_code = child.inner_exclusive_access().exit_code;
+    let page_table = PageTable::from_token(inner.memory_set.token());
+    *page_table
+        .trans_va_as_mut(VirtAddr(exit_code_ptr as usize))
+        .unwrap() = exit_code;
+    Ok(found_pid as isize)
 }
 
 #[repr(C)]
@@ -124,17 +107,15 @@ pub struct TimeVal {
 
 const MICRO_PER_SEC: usize = 1_000_000;
 
-pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> Result {
     let page_table = current_page_table();
-    if let Some(ts) = page_table.translate_va_to_pa(VirtAddr(ts as usize)) {
-        let ts = ts.as_mut::<TimeVal>();
-        let us = get_time_us();
-        ts.sec = us / MICRO_PER_SEC;
-        ts.usec = us % MICRO_PER_SEC;
-        0
-    } else {
-        -1
-    }
+    let ts = page_table
+        .trans_va_as_mut::<TimeVal>(VirtAddr(ts as usize))
+        .ok_or(code::TEMP)?;
+    let us = get_time_us();
+    ts.sec = us / MICRO_PER_SEC;
+    ts.usec = us % MICRO_PER_SEC;
+    Ok(0)
 }
 
 #[derive(Clone, Copy)]
@@ -152,15 +133,76 @@ pub fn sys_set_priority(_prio: isize) -> isize {
     todo!()
 }
 
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
+/// 映射虚拟内存。返回实际映射的地址。
+///
+/// `addr` 若是 NULL，那么内核会自动选择一个按页对齐的地址进行映射，这也是比较可移植的方式。
+///
+/// `addr` 若有指定地址，那么内核会尝试在最近的页边界上映射，但如果已经被映射过了，
+/// 就挑选一个新的地址。该新地址可能参考也可能不参考 `addr`。
+///
+/// 如果映射文件，那么会以该文件 (`fd`) `offset` 开始处的 `len` 个字节初始化映射内容。
+///
+/// `mmap()` 返回之后，就算 `fd` 指向的文件被立刻关闭，也不会影响映射的结果
+///
+/// `prot` 要么是 `PROT_NONE`，要么是多个标志位的或。
+///
+/// `flags` 决定该映射是否对其他映射到同一区域的进程可见，以及更新是否会同步到底层文件上。
+///
+/// 参数：
+/// - `addr` 映射的目标地址。
+/// - `len` 映射的目标长度
+/// - `prot` 描述该映射的内存保护方式，不能与文件打开模式冲突
+/// - `flags` 描述映射的特征，详细参考 MmapFlags
+/// - `fd` 被映射的文件描述符
+/// - `offset` 映射的起始偏移，必须是 PAGE_SIZE 的整数倍
+pub fn sys_mmap(addr: usize, len: usize, prot: u32, flags: u32, fd: i32, offset: usize) -> Result {
+    log::debug!("addr: {addr}");
+    log::debug!("len: {len}");
+
+    if VirtAddr(addr).page_offset() != 0 || VirtAddr(len).page_offset() != 0 || len == 0 {
+        return Err(code::EINVAL);
+    }
+    let Some(prot) = MmapProt::from_bits(prot) else {
+        // prot 出现了意料之外的标志位
+        log::error!("prot: {prot:#b}");
+        return Err(code::TEMP);
+    };
+    let Some(flags) = MmapFlags::from_bits(flags) else {
+        // flags 出现了意料之外的标志位
+        log::error!("flags: {flags:#b}");
+        return Err(code::TEMP);
+    };
+    log::debug!("prot: {prot:?}");
+    log::debug!("flags: {flags:?}");
+    log::debug!("fd: {fd}");
+    log::debug!("offset: {offset}");
+    if flags.contains(MmapFlags::MAP_ANONYMOUS | MmapFlags::MAP_SHARED) {
+        log::error!("anonymous shared mapping is not supported!");
+        return Err(code::EPERM);
+    }
+    if flags.contains(MmapFlags::MAP_ANONYMOUS) {
+        if fd != -1 || offset != 0 {
+            log::error!("fd must be -1 and offset must be 0 for anonyous mapping");
+            return Err(code::EPERM);
+        }
+        let process = current_process();
+        log::debug!("pid: {}", process.pid());
+        let mut inner = process.inner_exclusive_access();
+        return inner.memory_set.try_map(
+            VirtAddr(addr).vpn()..VirtAddr(addr + len).vpn(),
+            prot.into(),
+            false,
+        );
+    }
+
     todo!()
 }
 
-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
+pub fn sys_munmap(addr: usize, len: usize) -> isize {
     todo!()
 }
 
-pub fn sys_spawn(_path: *const u8) -> isize {
+pub fn sys_spawn(_path: *const u8) -> Result {
     todo!()
     // let page_table = current_page_table();
     // let path = if let Some(path) = page_table.translate_str(path) {
@@ -176,37 +218,29 @@ pub fn sys_spawn(_path: *const u8) -> isize {
     // }
 }
 
-/// 功能：设置线程控制块中 `clear_child_tid` 的值为 `tidptr`
+/// 设置线程控制块中 `clear_child_tid` 的值为 `tidptr`。总是返回调用者线程的 tid。
 ///
 /// 参数：
 /// - `tidptr`
-///
-/// 返回值：总是返回调用者线程的 tid。
-///
-/// 错误：永不错误。
-///
-/// syscall ID：96
-pub fn sys_set_tid_address(tidptr: *const i32) -> isize {
+pub fn sys_set_tid_address(tidptr: *const i32) -> Result {
     // NOTE: 在 linux 手册中，`tidptr` 的类型是 int*。这里设置为 i32，是参考 libc crate 设置 c_int=i32
     let task = current_task().unwrap();
     let mut inner = task.inner_exclusive_access();
     inner.clear_child_tid = tidptr as usize;
-    inner.res.as_ref().unwrap().tid as isize
+    Ok(inner.res.as_ref().unwrap().tid as isize)
 }
 
-/// 功能：将 program break 设置为 `brk`。高于当前堆顶会分配空间，低于则会释放空间
+/// 将 program break 设置为 `brk`。高于当前堆顶会分配空间，低于则会释放空间。
+///
+/// `brk` 为 0 时返回当前堆顶地址；否则返回 0。
 ///
 /// 参数：
-/// - `brk`
-///
-/// 返回值：
-///
-/// - 如 `brk` 为 0，返回当前堆顶。
-/// - 否则，分配成功返回 0，失败返回 -1。
-///
-/// 错误：永不错误。
-///
-/// syscall ID：96
-pub fn sys_brk(brk: usize) -> isize {
+/// - `brk` 希望设置的 program break 值
+pub fn sys_brk(brk: usize) -> Result {
+    let process = current_process();
+    let inner = process.inner_exclusive_access();
+    if brk == 0 {
+        return Ok(inner.brk as isize);
+    }
     todo!("impl sys_brk")
 }

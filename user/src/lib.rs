@@ -251,7 +251,7 @@ pub fn set_priority(prio: isize) -> isize {
 pub fn wait(exit_code: &mut i32) -> isize {
     loop {
         match sys_waitpid(-1, exit_code as *mut _) {
-            -2 => {
+            -11 => {
                 sys_yield();
             }
             n => {
@@ -264,7 +264,7 @@ pub fn wait(exit_code: &mut i32) -> isize {
 pub fn waitpid(pid: usize, exit_code: &mut i32) -> isize {
     loop {
         match sys_waitpid(pid as isize, exit_code as *mut _) {
-            -2 => {
+            -11 => {
                 sys_yield();
             }
             n => {
@@ -316,7 +316,7 @@ pub fn gettid() -> isize {
 pub fn waittid(tid: usize) -> isize {
     loop {
         match sys_waittid(tid) {
-            -2 => {
+            -11 => {
                 yield_();
             }
             exit_code => return exit_code,

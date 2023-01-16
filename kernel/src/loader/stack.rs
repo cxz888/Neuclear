@@ -63,7 +63,7 @@ impl StackInit {
         self.push_ptr(0);
         self.push_ptr(0);
 
-        // TODO: 这里暂时只有朴素的实现，以后可能要具体看看文档
+        // TODO: 这里 auxv 暂时只有朴素的实现，以后可能要具体看看文档
         for (type_, value) in info_block.auxv {
             self.push_ptr(type_ as usize);
             self.push_ptr(value);

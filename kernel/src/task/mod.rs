@@ -11,24 +11,20 @@
 
 mod context;
 mod id;
-mod kthread;
 mod manager;
 mod process;
 mod processor;
-mod stackless_coroutine;
 mod switch;
 mod tcb;
 
 pub use context::TaskContext;
 pub use id::{kstack_alloc, pid_alloc, KernelStack, PidHandle, TaskUserRes};
-pub use kthread::kernel_stackful_coroutine_test;
 pub use manager::add_task;
 pub use process::{ProcessControlBlock, ProcessControlBlockInner};
 pub use processor::{
-    current_page_table, current_process, current_task, current_trap_ctx_user_va, current_trap_cx,
+    current_page_table, current_process, current_task, current_trap_ctx, current_trap_ctx_user_va,
     current_user_token, run_tasks,
 };
-pub use stackless_coroutine::kernel_stackless_coroutine_test;
 pub use tcb::{TaskControlBlock, TaskStatus};
 
 use crate::fs::{open_file, OpenFlags};
@@ -42,10 +38,10 @@ use switch::__switch;
 pub fn block_current_and_run_next() {
     let task = take_current_task().unwrap();
     let mut task_inner = task.inner_exclusive_access();
-    let task_cx_ptr = &mut task_inner.task_ctx as *mut TaskContext;
+    let task_ctx_ptr = &mut task_inner.task_ctx as *mut TaskContext;
     task_inner.task_status = TaskStatus::Blocking;
     drop(task_inner);
-    schedule(task_cx_ptr);
+    schedule(task_ctx_ptr);
 }
 
 /// Make current task suspended and switch to the next task
@@ -56,7 +52,7 @@ pub fn suspend_current_and_run_next() {
     // ---- access current TCB exclusively
     let mut task_inner = task.inner_exclusive_access();
 
-    let task_cx_ptr = &mut task_inner.task_ctx as *mut TaskContext;
+    let task_ctx_ptr = &mut task_inner.task_ctx as *mut TaskContext;
     // Change status to Ready
     task_inner.task_status = TaskStatus::Ready;
     drop(task_inner);
@@ -65,7 +61,7 @@ pub fn suspend_current_and_run_next() {
     // push back to ready queue.
     add_task(task);
     // jump to scheduling cycle
-    schedule(task_cx_ptr);
+    schedule(task_ctx_ptr);
 }
 
 /// Exit current task, recycle process resources and switch to the next task
@@ -103,7 +99,7 @@ pub fn exit_current_and_run_next(exit_code: i32) -> ! {
         // 所以需要先将这里的 process_inner drop 后才可以清除
         let mut recycle_res = Vec::<TaskUserRes>::new();
 
-        // deallocate user res (including tid/trap_cx/ustack) of all threads
+        // deallocate user res (including tid/trap_ctx/ustack) of all threads
         // it has to be done before we dealloc the whole memory_set
         // otherwise they will be deallocated twice
         for task in process_inner.tasks.iter().filter(|t| t.is_some()) {

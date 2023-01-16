@@ -15,8 +15,12 @@
 mod context;
 
 use crate::config::TRAMPOLINE;
+use crate::mm::VirtAddr;
 use crate::syscall::syscall;
-use crate::task::{current_process, current_trap_ctx_user_va, current_trap_cx, current_user_token};
+use crate::task::{
+    current_page_table, current_process, current_trap_ctx, current_trap_ctx_user_va,
+    current_user_token,
+};
 use crate::task::{exit_current_and_run_next, suspend_current_and_run_next};
 use crate::timer::{check_timer, set_next_trigger};
 use riscv::register::{
@@ -57,17 +61,20 @@ pub fn trap_handler() -> ! {
     log::trace!(
         "pid {}: pc-{:#x}",
         current_process().pid.0,
-        current_trap_cx().sepc
+        current_trap_ctx().sepc
     );
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
             // jump to next instruction anyway
-            let mut cx = current_trap_cx();
+            let mut cx = current_trap_ctx();
             cx.sepc += 4;
             // get system call return value
-            let result = syscall(cx.x[17], [cx.x[10], cx.x[11], cx.x[12], cx.x[13]]);
+            let result = syscall(
+                cx.x[17],
+                [cx.x[10], cx.x[11], cx.x[12], cx.x[13], cx.x[14], cx.x[15]],
+            );
             // cx is changed during sys_exec, so we have to call it again
-            cx = current_trap_cx();
+            cx = current_trap_ctx();
             cx.x[10] = result as usize;
         }
         Trap::Exception(Exception::StoreFault)
@@ -76,11 +83,12 @@ pub fn trap_handler() -> ! {
         | Trap::Exception(Exception::InstructionPageFault)
         | Trap::Exception(Exception::LoadFault)
         | Trap::Exception(Exception::LoadPageFault) => {
+            log::debug!("regs: {:#x?}", current_trap_ctx().x);
             log::error!(
                 "[kernel] {:?} in application, bad addr = {:#x}, bad inst pc = {:#x}, core dumped.",
                 scause.cause(),
                 stval,
-                current_trap_cx().sepc,
+                current_trap_ctx().sepc,
             );
             // page fault exit code
             exit_current_and_run_next(-2);

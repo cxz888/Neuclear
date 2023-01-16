@@ -25,6 +25,6 @@ goblin = { version = "0.6", default-features = false, features = [
 ] }
 
 [profile.release]
-debug = true
-opt-level = 0
+# debug = true
+# opt-level = 0
 # opt-level = "s"

@@ -1,4 +1,7 @@
-use core::iter::Step;
+use core::{
+    iter::Step,
+    ops::{RangeBounds, RangeFrom},
+};
 
 use crate::config::{PAGE_SIZE, PAGE_SIZE_BITS, PTE_PER_PAGE};
 
@@ -30,6 +33,9 @@ impl PhysAddr {
     pub fn as_mut<T>(&self) -> &'static mut T {
         unsafe { (self.0 as *mut T).as_mut().unwrap() }
     }
+    pub fn add(self, offset: usize) -> Self {
+        Self(self.0 + offset)
+    }
 }
 
 /// 物理页号。Sv39 中合法的页号只考虑低 44 位。
@@ -39,6 +45,9 @@ pub struct PhysPageNum(pub usize);
 impl PhysPageNum {
     pub fn page_start(&self) -> PhysAddr {
         PhysAddr(self.0 << PAGE_SIZE_BITS)
+    }
+    pub fn as_page_ptes(&self) -> &'static [PageTableEntry; PTE_PER_PAGE] {
+        self.as_ref()
     }
     pub fn as_page_ptes_mut(&mut self) -> &'static mut [PageTableEntry; PTE_PER_PAGE] {
         self.as_mut()
@@ -77,17 +86,22 @@ impl PhysPageNum {
 pub struct VirtAddr(pub(crate) usize);
 
 impl VirtAddr {
+    #[inline]
     pub const fn page_offset(&self) -> usize {
         self.0 & (PAGE_SIZE - 1)
     }
     /// 向下取整页号
+    #[inline]
     pub const fn vpn_floor(&self) -> VirtPageNum {
-        VirtPageNum(self.0 / PAGE_SIZE)
+        VirtPageNum(self.0 >> PAGE_SIZE_BITS)
     }
+    // 当前虚地址所在的虚拟页号
+    #[inline]
     pub const fn vpn(&self) -> VirtPageNum {
         self.vpn_floor()
     }
     /// 向上取整页号
+    #[inline]
     pub const fn vpn_ceil(&self) -> VirtPageNum {
         VirtPageNum((self.0 - 1 + PAGE_SIZE) / PAGE_SIZE)
     }
@@ -110,6 +124,9 @@ impl VirtPageNum {
     }
     pub fn page_start(&self) -> VirtAddr {
         VirtAddr(self.0 << PAGE_SIZE_BITS)
+    }
+    pub fn add(self, len: usize) -> Self {
+        Self(self.0 + len)
     }
 }
 

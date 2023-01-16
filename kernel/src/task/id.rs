@@ -1,12 +1,13 @@
 use super::{ProcessControlBlock, ProcessControlBlockInner};
-use crate::config::{KERNEL_STACK_SIZE, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE};
+use crate::config::{
+    KERNEL_STACK_SIZE, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK, USER_STACK_SIZE,
+};
 use crate::mm::{MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
-use lazy_static::*;
 
 pub struct RecycleAllocator {
     current: usize,
@@ -14,7 +15,7 @@ pub struct RecycleAllocator {
 }
 
 impl RecycleAllocator {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         RecycleAllocator {
             current: 0,
             recycled: Vec::new(),
@@ -39,12 +40,10 @@ impl RecycleAllocator {
     }
 }
 
-lazy_static! {
-    static ref PID_ALLOCATOR: UPSafeCell<RecycleAllocator> =
-        unsafe { UPSafeCell::new(RecycleAllocator::new()) };
-    static ref KSTACK_ALLOCATOR: UPSafeCell<RecycleAllocator> =
-        unsafe { UPSafeCell::new(RecycleAllocator::new()) };
-}
+static PID_ALLOCATOR: UPSafeCell<RecycleAllocator> =
+    unsafe { UPSafeCell::new(RecycleAllocator::new()) };
+static KSTACK_ALLOCATOR: UPSafeCell<RecycleAllocator> =
+    unsafe { UPSafeCell::new(RecycleAllocator::new()) };
 
 pub struct PidHandle(pub usize);
 
@@ -72,8 +71,8 @@ pub fn kstack_alloc() -> KernelStack {
     let (kstack_bottom, kstack_top) = kernel_stack_position(kstack_id);
     //println!("kstack_alloc  kstack_bottom: {:#x?}, kstack_top: {:#x?}", kstack_bottom, kstack_top);
     KERNEL_SPACE.exclusive_access().insert_framed_area(
-        VirtAddr(kstack_bottom),
-        VirtAddr(kstack_top),
+        VirtAddr(kstack_bottom).vpn_floor(),
+        VirtAddr(kstack_top).vpn_ceil(),
         MapPermission::R | MapPermission::W,
     );
     KernelStack(kstack_id)
@@ -112,28 +111,14 @@ impl KernelStack {
 
 pub struct TaskUserRes {
     pub tid: usize,
-    pub ustack_base: usize,
     pub process: Weak<ProcessControlBlock>,
 }
 
-fn trap_cx_bottom_from_tid(tid: usize) -> usize {
-    TRAP_CONTEXT - tid * PAGE_SIZE
-}
-
-fn ustack_bottom_from_tid(ustack_base: usize, tid: usize) -> usize {
-    ustack_base + tid * (PAGE_SIZE + USER_STACK_SIZE)
-}
-
 impl TaskUserRes {
-    pub fn new(
-        process: &Arc<ProcessControlBlock>,
-        ustack_base: usize,
-        alloc_user_res: bool,
-    ) -> Self {
+    pub fn new(process: &Arc<ProcessControlBlock>, alloc_user_res: bool) -> Self {
         let tid = process.inner_exclusive_access().alloc_tid();
         let task_user_res = Self {
             tid,
-            ustack_base,
             process: Arc::downgrade(process),
         };
         if alloc_user_res {
@@ -145,21 +130,21 @@ impl TaskUserRes {
     /// 分配用户空间所需的资源，包括用户栈和 trap_ctx
     pub fn alloc_user_res(&self, memory_set: &mut MemorySet) {
         // alloc user stack
-        let ustack_bottom = ustack_bottom_from_tid(self.ustack_base, self.tid);
+        let ustack_bottom = self.user_stack_low_addr();
         log::debug!("stack low addr: {:#x}", ustack_bottom);
         let ustack_top = ustack_bottom + USER_STACK_SIZE;
         log::debug!("stack high addr: {:#x}", ustack_top);
         memory_set.insert_framed_area(
-            VirtAddr(ustack_bottom),
-            VirtAddr(ustack_top),
+            VirtAddr(ustack_bottom).vpn_floor(),
+            VirtAddr(ustack_top).vpn_ceil(),
             MapPermission::R | MapPermission::W | MapPermission::U,
         );
         // alloc trap_ctx
-        let trap_ctx_bottom = trap_cx_bottom_from_tid(self.tid);
+        let trap_ctx_bottom = self.trap_ctx_low_addr();
         let trap_ctx_top = trap_ctx_bottom + PAGE_SIZE;
         memory_set.insert_framed_area(
-            VirtAddr(trap_ctx_bottom),
-            VirtAddr(trap_ctx_top),
+            VirtAddr(trap_ctx_bottom).vpn_floor(),
+            VirtAddr(trap_ctx_top).vpn_ceil(),
             MapPermission::R | MapPermission::W,
         );
     }
@@ -167,27 +152,17 @@ impl TaskUserRes {
     fn dealloc_user_res(&self) {
         // dealloc tid
         let process = self.process.upgrade().unwrap();
-        let mut process_inner = process.inner_exclusive_access();
+        let mut inner = process.inner_exclusive_access();
         // dealloc ustack manually
-        let ustack_bottom_va = VirtAddr(ustack_bottom_from_tid(self.ustack_base, self.tid));
-        process_inner
+        let user_stack_low_addr = VirtAddr(self.user_stack_low_addr());
+        inner
             .memory_set
-            .remove_area_with_start_vpn(ustack_bottom_va.vpn());
-        // dealloc trap_cx manually
-        let trap_cx_bottom_va = VirtAddr(trap_cx_bottom_from_tid(self.tid));
-        process_inner
+            .remove_area_with_start_vpn(user_stack_low_addr.vpn());
+        // dealloc trap_ctx manually
+        let trap_ctx_low_addr = VirtAddr(self.trap_ctx_low_addr());
+        inner
             .memory_set
-            .remove_area_with_start_vpn(trap_cx_bottom_va.vpn());
-    }
-
-    #[allow(unused)]
-    pub fn alloc_tid(&mut self) {
-        self.tid = self
-            .process
-            .upgrade()
-            .unwrap()
-            .inner_exclusive_access()
-            .alloc_tid();
+            .remove_area_with_start_vpn(trap_ctx_low_addr.vpn());
     }
 
     pub fn dealloc_tid(&self) {
@@ -196,23 +171,23 @@ impl TaskUserRes {
         process_inner.dealloc_tid(self.tid);
     }
 
-    pub fn trap_cx_user_va(&self) -> usize {
-        trap_cx_bottom_from_tid(self.tid)
-    }
-
     pub fn trap_ctx_ppn(&self, pcb: &mut ProcessControlBlockInner) -> PhysPageNum {
-        let trap_cx_bottom_va = VirtAddr(trap_cx_bottom_from_tid(self.tid));
+        let trap_ctx_bottom_va = VirtAddr(self.trap_ctx_low_addr());
         pcb.memory_set
-            .translate(trap_cx_bottom_va.vpn())
+            .translate(trap_ctx_bottom_va.vpn())
             .unwrap()
             .ppn()
     }
 
-    pub fn ustack_base(&self) -> usize {
-        self.ustack_base
+    pub fn trap_ctx_low_addr(&self) -> usize {
+        // 一个用户栈，一个Guard Page，一个 Trap Context
+        TRAP_CONTEXT - self.tid * (USER_STACK_SIZE + PAGE_SIZE * 2)
     }
-    pub fn ustack_top(&self) -> usize {
-        ustack_bottom_from_tid(self.ustack_base, self.tid) + USER_STACK_SIZE
+    pub fn user_stack_low_addr(&self) -> usize {
+        USER_STACK - self.tid * (USER_STACK_SIZE + PAGE_SIZE * 2)
+    }
+    pub fn user_stack_high_addr(&self) -> usize {
+        USER_STACK - self.tid * (USER_STACK_SIZE + PAGE_SIZE * 2) + USER_STACK_SIZE
     }
 }
 
@@ -220,41 +195,5 @@ impl Drop for TaskUserRes {
     fn drop(&mut self) {
         self.dealloc_tid();
         self.dealloc_user_res();
-    }
-}
-
-use alloc::alloc::{alloc, dealloc, Layout};
-
-#[derive(Clone)]
-pub struct KStack(usize);
-
-const STACK_SIZE: usize = 0x8000;
-
-impl KStack {
-    pub fn new() -> KStack {
-        let bottom =
-            unsafe { alloc(Layout::from_size_align(STACK_SIZE, STACK_SIZE).unwrap()) } as usize;
-        KStack(bottom)
-    }
-
-    pub fn top(&self) -> usize {
-        self.0 + STACK_SIZE
-    }
-}
-use core::fmt::{self, Debug, Formatter};
-impl Debug for KStack {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_fmt(format_args!("KStack:{:#x}", self.0))
-    }
-}
-
-impl Drop for KStack {
-    fn drop(&mut self) {
-        unsafe {
-            dealloc(
-                self.0 as _,
-                Layout::from_size_align(STACK_SIZE, STACK_SIZE).unwrap(),
-            );
-        }
     }
 }

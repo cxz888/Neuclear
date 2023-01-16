@@ -115,7 +115,6 @@ pub fn open_file(name: &str, flags: OpenFlags) -> Option<Arc<OSInode>> {
 //         self.writable
 //     }
 //     fn read(&self, mut buf: UserBuffer) -> usize {
-//         todo!()
 //         // let mut inner = self.inner.exclusive_access();
 //         // let mut total_read_size = 0usize;
 //         // for slice in buf.buffers.iter_mut() {
@@ -129,7 +128,6 @@ pub fn open_file(name: &str, flags: OpenFlags) -> Option<Arc<OSInode>> {
 //         // total_read_size
 //     }
 //     fn write(&self, buf: UserBuffer) -> usize {
-//         todo!();
 //         // let mut inner = self.inner.exclusive_access();
 //         // let mut total_write_size = 0usize;
 //         // for slice in buf.buffers.iter() {

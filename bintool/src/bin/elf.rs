@@ -18,3 +18,9 @@ fn main() {
         .unwrap();
     std::fs::write("lua.elf", data).unwrap();
 }
+
+#[test]
+fn test_wrapping() {
+    let a = usize::MAX - 1000;
+    println!("{}", a as isize);
+}

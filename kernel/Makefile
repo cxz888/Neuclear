@@ -1,11 +1,8 @@
 # Building
 TARGET := riscv64imac-unknown-none-elf
-MODE := release
-KERNEL_ELF := target/$(TARGET)/$(MODE)/kernel
+KERNEL_ELF := target/$(TARGET)/release/kernel
 KERNEL_BIN := $(KERNEL_ELF).bin
-KERNEL_ASM := $(KERNEL_ELF).asm
 FS_IMG := ../res/fat32.img
-APPS := ../user/src/bin/*
 
 # BOARD
 BOARD ?= qemu

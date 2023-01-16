@@ -19,18 +19,18 @@ pub struct Processor {
     /// The task currently executing on the current processor
     current: Option<Arc<TaskControlBlock>>,
     /// The basic control flow of each core, helping to select and switch process
-    idle_task_cx: TaskContext,
+    idle_task_ctx: TaskContext,
 }
 
 impl Processor {
     pub fn new() -> Self {
         Self {
             current: None,
-            idle_task_cx: TaskContext::zero_init(),
+            idle_task_ctx: TaskContext::zero_init(),
         }
     }
-    fn get_idle_task_cx_ptr(&mut self) -> *mut TaskContext {
-        &mut self.idle_task_cx as *mut _
+    fn get_idle_task_ctx_ptr(&mut self) -> *mut TaskContext {
+        &mut self.idle_task_ctx as *mut _
     }
     pub fn take_current(&mut self) -> Option<Arc<TaskControlBlock>> {
         self.current.take()
@@ -54,10 +54,10 @@ pub fn run_tasks() {
         let mut processor = PROCESSOR.exclusive_access();
         if let Some(task) = fetch_task() {
             // println!("task get!");
-            let idle_task_cx_ptr = processor.get_idle_task_cx_ptr();
+            let idle_task_ctx_ptr = processor.get_idle_task_ctx_ptr();
             // access coming task TCB exclusively
             let mut task_inner = task.inner_exclusive_access();
-            let next_task_cx_ptr = &task_inner.task_ctx as *const TaskContext;
+            let next_task_ctx_ptr = &task_inner.task_ctx as *const TaskContext;
             task_inner.task_status = TaskStatus::Running;
             drop(task_inner);
             // release coming task TCB manually
@@ -65,7 +65,7 @@ pub fn run_tasks() {
             // release processor manually
             drop(processor);
             unsafe {
-                __switch(idle_task_cx_ptr, next_task_cx_ptr);
+                __switch(idle_task_ctx_ptr, next_task_ctx_ptr);
             }
         } else {
             panic!("no tasks available in run_tasks");
@@ -99,7 +99,7 @@ pub fn current_page_table() -> PageTable {
 }
 
 /// Get the mutable reference to trap context of current task
-pub fn current_trap_cx() -> &'static mut TrapContext {
+pub fn current_trap_ctx() -> &'static mut TrapContext {
     current_task().unwrap().inner_exclusive_access().trap_ctx()
 }
 
@@ -110,15 +110,15 @@ pub fn current_trap_ctx_user_va() -> usize {
         .res
         .as_ref()
         .unwrap()
-        .trap_cx_user_va()
+        .trap_ctx_low_addr()
 }
 
 /// Return to idle control flow for new scheduling
-pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
+pub fn schedule(switched_task_ctx_ptr: *mut TaskContext) {
     let mut processor = PROCESSOR.exclusive_access();
-    let idle_task_cx_ptr = processor.get_idle_task_cx_ptr();
+    let idle_task_ctx_ptr = processor.get_idle_task_ctx_ptr();
     drop(processor);
     unsafe {
-        __switch(switched_task_cx_ptr, idle_task_cx_ptr);
+        __switch(switched_task_ctx_ptr, idle_task_ctx_ptr);
     }
 }
