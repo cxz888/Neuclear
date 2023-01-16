@@ -232,15 +232,13 @@ pub fn sys_set_tid_address(tidptr: *const i32) -> Result {
 
 /// 将 program break 设置为 `brk`。高于当前堆顶会分配空间，低于则会释放空间。
 ///
-/// `brk` 为 0 时返回当前堆顶地址；否则返回 0。
+/// `brk` 为 0 时返回当前堆顶地址。设置成功时返回新的 brk，设置失败返回原来的 brk
 ///
 /// 参数：
 /// - `brk` 希望设置的 program break 值
 pub fn sys_brk(brk: usize) -> Result {
     let process = current_process();
-    let inner = process.inner_exclusive_access();
-    if brk == 0 {
-        return Ok(inner.brk as isize);
-    }
-    todo!("impl sys_brk")
+    let mut inner = process.inner_exclusive_access();
+    // 不大于最初的堆地址则失败。其中也包括了 brk 为 0  的情况
+    Ok(inner.set_user_brk(brk) as isize)
 }

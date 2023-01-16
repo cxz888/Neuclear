@@ -3,9 +3,8 @@ use crate::{
     error::Result,
     fs::{File, Stdin, Stdout},
     loader::Loader,
-    mm::{MemorySet, KERNEL_SPACE},
+    mm::{MemorySet, VirtAddr, VirtPageNum},
     sync::{Condvar, Mutex, Semaphore, UPSafeCell},
-    trap::{trap_handler, TrapContext},
 };
 use alloc::{
     string::String,
@@ -14,7 +13,6 @@ use alloc::{
     vec::Vec,
 };
 use core::cell::RefMut;
-use goblin::elf::Elf;
 
 pub struct ProcessControlBlock {
     pub pid: PidHandle,
@@ -27,6 +25,7 @@ pub struct ProcessControlBlockInner {
     pub parent: Weak<ProcessControlBlock>,
     pub children: Vec<Arc<ProcessControlBlock>>,
     pub exit_code: i32,
+    pub heap_start: VirtPageNum,
     pub brk: usize,
     pub fd_table: Vec<Option<Arc<dyn File + Send + Sync>>>,
     pub task_res_allocator: RecycleAllocator,
@@ -62,8 +61,20 @@ impl ProcessControlBlockInner {
         self.tasks.len()
     }
 
-    pub fn get_task(&self, tid: usize) -> Arc<TaskControlBlock> {
+    pub fn task(&self, tid: usize) -> Arc<TaskControlBlock> {
         self.tasks[tid].as_ref().unwrap().clone()
+    }
+
+    /// 设置用户堆顶。失败返回原来的 brk，成功则返回新的 brk
+    pub fn set_user_brk(&mut self, new_brk: usize) -> usize {
+        let new_end = VirtAddr(new_brk).vpn_ceil();
+        if new_end <= self.heap_start {
+            return self.brk;
+        }
+        // TODO: 注，这里是假定地址空间和物理内存都够用
+        self.memory_set.set_user_brk(new_end, self.heap_start);
+        self.brk = new_brk;
+        new_brk
     }
 }
 
@@ -72,10 +83,8 @@ impl ProcessControlBlock {
         self.inner.exclusive_access()
     }
 
-    pub fn new(elf_data: &[u8]) -> Arc<Self> {
-        // memory_set with elf program headers/trampoline/trap context/user stack
-        let elf = Elf::parse(elf_data).expect("should be valid elf");
-        let (memory_set, init_brk, entry_point) = MemorySet::from_elf(&elf, elf_data);
+    /// 一个空的进程，接下来应该紧跟着 `load()` 来加载 ELF 数据。
+    pub fn new() -> Arc<Self> {
         // allocate a pid
         let pid = pid_alloc();
         let process = Arc::new(Self {
@@ -83,11 +92,12 @@ impl ProcessControlBlock {
             inner: unsafe {
                 UPSafeCell::new(ProcessControlBlockInner {
                     is_zombie: false,
-                    memory_set,
+                    memory_set: MemorySet::new_bare(),
                     parent: Weak::new(),
                     children: Vec::new(),
                     exit_code: 0,
-                    brk: init_brk,
+                    heap_start: VirtPageNum(0),
+                    brk: 0,
                     fd_table: vec![
                         // 0 -> stdin
                         Some(Arc::new(Stdin)),
@@ -104,26 +114,14 @@ impl ProcessControlBlock {
                 })
             },
         });
-        // create a main thread, we should allocate ustack and trap_ctx here
-        let task = Arc::new(TaskControlBlock::new(&process, true));
-        // prepare trap_ctx of main thread
-        let mut task_inner = task.inner_exclusive_access();
-        let trap_ctx = task_inner.trap_ctx();
-        let ustack_top = task_inner.res.as_ref().unwrap().user_stack_high_addr();
-        let kernel_stack_top = task.kernel_stack.top();
-        drop(task_inner);
-        *trap_ctx = TrapContext::app_init_context(
-            entry_point,
-            ustack_top,
-            KERNEL_SPACE.exclusive_access().token(),
-            kernel_stack_top,
-            trap_handler as usize,
-        );
-        // add main thread to the process
-        let mut process_inner = process.inner_exclusive_access();
-        process_inner.tasks.push(Some(Arc::clone(&task)));
-        drop(process_inner);
-        // add main thread to scheduler
+        // 创建主线程，这里不急着分配线程资源，因为 load 中会分配
+        let task = Arc::new(TaskControlBlock::new(&process, false));
+        process
+            .inner_exclusive_access()
+            .tasks
+            .push(Some(Arc::clone(&task)));
+
+        // 将主线程加入调度器
         add_task(task);
         process
     }
@@ -156,6 +154,7 @@ impl ProcessControlBlock {
                     parent: Arc::downgrade(self),
                     children: Vec::new(),
                     exit_code: 0,
+                    heap_start: parent_inner.heap_start,
                     brk: parent_inner.brk,
                     fd_table: new_fd_table,
                     tasks: Vec::new(),
@@ -198,9 +197,9 @@ impl ProcessControlBlock {
         Loader::load(&mut inner, path, args)
     }
 
-    pub fn _spawn(self: &Arc<Self>, elf_data: &[u8]) -> isize {
-        let child = Self::new(elf_data);
-
+    pub fn _spawn(self: &Arc<Self>, _elf_data: &[u8]) -> isize {
+        let child = Self::new();
+        // TODO: load ELF 数据
         let mut parent_inner = self.inner_exclusive_access();
         parent_inner.children.push(Arc::clone(&child));
 

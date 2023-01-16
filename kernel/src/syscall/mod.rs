@@ -126,7 +126,7 @@ pub fn syscall(id: usize, args: [usize; 6]) -> isize {
                 "[kernel] Unsupport inst pc = {:#x}",
                 current_trap_ctx().sepc,
             );
-            panic!("Unsupported id: {}", id);
+            panic!("[kernel] Unsupported id: {}", id);
         }
     };
     let curr_pid = current_process().pid.0;

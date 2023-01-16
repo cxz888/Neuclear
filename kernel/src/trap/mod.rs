@@ -15,11 +15,9 @@
 mod context;
 
 use crate::config::TRAMPOLINE;
-use crate::mm::VirtAddr;
 use crate::syscall::syscall;
 use crate::task::{
-    current_page_table, current_process, current_trap_ctx, current_trap_ctx_user_va,
-    current_user_token,
+    current_process, current_trap_ctx, current_trap_ctx_user_va, current_user_token,
 };
 use crate::task::{exit_current_and_run_next, suspend_current_and_run_next};
 use crate::timer::{check_timer, set_next_trigger};
@@ -83,7 +81,6 @@ pub fn trap_handler() -> ! {
         | Trap::Exception(Exception::InstructionPageFault)
         | Trap::Exception(Exception::LoadFault)
         | Trap::Exception(Exception::LoadPageFault) => {
-            log::debug!("regs: {:#x?}", current_trap_ctx().x);
             log::error!(
                 "[kernel] {:?} in application, bad addr = {:#x}, bad inst pc = {:#x}, core dumped.",
                 scause.cause(),
@@ -94,7 +91,10 @@ pub fn trap_handler() -> ! {
             exit_current_and_run_next(-2);
         }
         Trap::Exception(Exception::IllegalInstruction) => {
-            log::error!("[kernel] IllegalInstruction in application, core dumped.");
+            log::error!(
+                "[kernel] IllegalInstruction(pc={:#x}) in application, core dumped.",
+                stval
+            );
             // illegal instruction exit code
             exit_current_and_run_next(-3);
         }

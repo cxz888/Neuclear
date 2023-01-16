@@ -3,7 +3,10 @@ use alloc::{string::String, vec::Vec};
 use crate::{
     config::PTR_SIZE,
     mm::{PageTable, VirtAddr},
+    timer::get_time,
 };
+
+use super::AT_RANDOM;
 
 pub struct StackInit {
     pub sp: usize,
@@ -31,27 +34,33 @@ impl StackInit {
 
     pub fn push_ptrs(&mut self, ptrs: &[usize]) {
         for &ptr in ptrs.into_iter().rev() {
-            self.push_ptr(ptr)
+            self.push_usize(ptr)
         }
     }
 
-    pub fn push_ptr(&mut self, ptr: usize) {
+    pub fn push_usize(&mut self, ptr: usize) {
         self.sp -= PTR_SIZE;
         *self.pt.trans_va_as_mut(VirtAddr(self.sp)).unwrap() = ptr;
     }
 
-    /// TODO: 由于用户库需要 argv 放入 a1 寄存器，这里返回一下。后续可以修一下
+    /// 由于用户库需要 argv 放入 a1 寄存器，这里返回一下。
     pub fn init_stack(&mut self, info_block: InfoBlock) -> usize {
         self.sp -= (info_block.args.len() + 1) * PTR_SIZE;
 
         let argc = info_block.args.len();
-        self.push_ptr(0);
+        self.push_usize(0);
+        // 这里应放入 16 字节的随机数。目前实现依赖运行时间
+        // 据 Hacker News 所说，它是 "used to construct stack canaries and function pointer encryption keys"
+        // 参考 https://news.ycombinator.com/item?id=24113026
+        self.push_usize(get_time());
+        self.push_usize(get_time());
+        let random_pos = self.sp;
         let envs: Vec<usize> = info_block
             .envs
             .into_iter()
             .map(|env| self.push_str(&env))
             .collect();
-        self.push_ptr(0);
+        self.push_usize(0);
         let argv: Vec<usize> = info_block
             .args
             .into_iter()
@@ -59,27 +68,31 @@ impl StackInit {
             .collect();
         // 清空低 3 位，也就是对齐到 8 字节
         self.sp &= !0b111;
-        // 为 NULL 的 auxv（auxv 是键值对）
-        self.push_ptr(0);
-        self.push_ptr(0);
+        // AT_NULL 的 auxv（auxv 是键值对）
+        self.push_usize(0);
+        self.push_usize(0);
 
-        // TODO: 这里 auxv 暂时只有朴素的实现，以后可能要具体看看文档
+        // 辅助向量
+        // 随机串的地址
+        self.push_usize(AT_RANDOM as usize);
+        self.push_usize(random_pos);
+        // type 在低地址，而 value 在高地址
         for (type_, value) in info_block.auxv {
-            self.push_ptr(type_ as usize);
-            self.push_ptr(value);
+            self.push_usize(value);
+            self.push_usize(type_ as usize);
         }
 
         // 环境变量指针向量
-        self.push_ptr(0);
+        self.push_usize(0);
         self.push_ptrs(&envs);
 
         // 参数指针向量
-        self.push_ptr(0);
+        self.push_usize(0);
         self.push_ptrs(&argv);
         let argv_base = self.sp;
 
         // 推入 argc
-        self.push_ptr(argc);
+        self.push_usize(argc);
         argv_base
     }
 }

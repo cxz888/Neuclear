@@ -53,7 +53,10 @@ impl TaskControlBlockInner {
 impl TaskControlBlock {
     pub fn new(process: &Arc<ProcessControlBlock>, alloc_user_res: bool) -> Self {
         let res = TaskUserRes::new(process, alloc_user_res);
-        let trap_ctx_ppn = res.trap_ctx_ppn(&mut process.inner_exclusive_access());
+        // 如果这个为 0 说明用户资源暂时未分配。应当延后分配，比如 Load ELF 时
+        let trap_ctx_ppn = res
+            .trap_ctx_ppn(&mut process.inner_exclusive_access().memory_set)
+            .unwrap_or(PhysPageNum(0));
         let kernel_stack = kstack_alloc();
         let kstack_top = kernel_stack.top();
         Self {

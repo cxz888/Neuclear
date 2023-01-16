@@ -130,8 +130,8 @@ impl PageTable {
         *pte = PageTableEntry::empty();
     }
     #[inline]
-    pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
-        self.find_pte(vpn).copied()
+    pub fn translate(&self, vpn: VirtPageNum) -> Option<PhysPageNum> {
+        self.find_pte(vpn).copied().map(|pte| pte.ppn())
     }
     pub fn translate_va_to_pa(&self, va: VirtAddr) -> Option<PhysAddr> {
         self.find_pte(va.vpn_floor()).map(|pte| {
@@ -178,7 +178,7 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
     while start < end {
         let start_va = VirtAddr(start);
         let mut vpn = start_va.vpn_floor();
-        let mut ppn = page_table.translate(vpn).unwrap().ppn();
+        let mut ppn = page_table.translate(vpn).unwrap();
         vpn.0 += 1;
         let mut end_va = vpn.page_start();
         end_va = end_va.min(VirtAddr(end));

@@ -1,4 +1,4 @@
-use super::{ProcessControlBlock, ProcessControlBlockInner};
+use super::ProcessControlBlock;
 use crate::config::{
     KERNEL_STACK_SIZE, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK, USER_STACK_SIZE,
 };
@@ -115,6 +115,7 @@ pub struct TaskUserRes {
 }
 
 impl TaskUserRes {
+    /// 用户资源包括用户栈和 trap_ctx。
     pub fn new(process: &Arc<ProcessControlBlock>, alloc_user_res: bool) -> Self {
         let tid = process.inner_exclusive_access().alloc_tid();
         let task_user_res = Self {
@@ -171,12 +172,9 @@ impl TaskUserRes {
         process_inner.dealloc_tid(self.tid);
     }
 
-    pub fn trap_ctx_ppn(&self, pcb: &mut ProcessControlBlockInner) -> PhysPageNum {
+    pub fn trap_ctx_ppn(&self, memory_set: &mut MemorySet) -> Option<PhysPageNum> {
         let trap_ctx_bottom_va = VirtAddr(self.trap_ctx_low_addr());
-        pcb.memory_set
-            .translate(trap_ctx_bottom_va.vpn())
-            .unwrap()
-            .ppn()
+        memory_set.translate(trap_ctx_bottom_va.vpn())
     }
 
     pub fn trap_ctx_low_addr(&self) -> usize {

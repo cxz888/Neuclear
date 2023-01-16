@@ -27,7 +27,7 @@ pub use processor::{
 };
 pub use tcb::{TaskControlBlock, TaskStatus};
 
-use crate::fs::{open_file, OpenFlags};
+use crate::loader::Loader;
 use alloc::{sync::Arc, vec::Vec};
 use core::mem;
 use lazy_static::*;
@@ -134,9 +134,9 @@ lazy_static! {
     /// the name "initproc" may be changed to any other app name like "usertests",
     /// but we have user_shell, so we don't need to change it.
     pub static ref INITPROC: Arc<ProcessControlBlock> = {
-        let inode = open_file("initproc", OpenFlags::RDONLY).unwrap();
-        let v = inode.read_all();
-        ProcessControlBlock::new(v.as_slice())
+        let pcb = ProcessControlBlock::new();
+        Loader::load(&mut pcb.inner_exclusive_access(), "initproc", Vec::new()).expect("INITPROC Failed.");
+        pcb
     };
 }
 

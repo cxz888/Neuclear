@@ -8,22 +8,14 @@ use crate::{
     config::{MEMORY_END, MMIO, PAGE_SIZE, PAGE_SIZE_BITS, SECOND_START, TRAMPOLINE},
     error::{code, Result},
     sync::UPSafeCell,
-    syscall::MmapProt,
 };
 
 use alloc::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
-    vec::Vec,
 };
 use bitflags::bitflags;
 use core::ops::Range;
-use goblin::elf::{
-    header::ET_EXEC,
-    program_header,
-    program_header::{PF_R, PF_W, PF_X, PT_LOAD},
-    Elf,
-};
 use lazy_static::*;
 use riscv::register::satp;
 
@@ -55,89 +47,16 @@ pub fn kernel_token() -> usize {
 /// memory set structure, controls virtual-memory space
 pub struct MemorySet {
     page_table: PageTable,
-    areas: BTreeSet<MapArea>,
+    // 起始 vpn 映射到 MapArea
+    areas: BTreeMap<VirtPageNum, MapArea>,
 }
 
 impl MemorySet {
     pub fn new_bare() -> Self {
         Self {
             page_table: PageTable::new(),
-            areas: BTreeSet::new(),
+            areas: BTreeMap::new(),
         }
-    }
-    pub fn token(&self) -> usize {
-        self.page_table.token()
-    }
-    /// 尝试在 `vm_range` 进行映射
-    pub fn try_map(
-        &mut self,
-        vpn_range: Range<VirtPageNum>,
-        perm: MapPermission,
-        fixed: bool,
-    ) -> Result<isize> {
-        // TODO: 这里，如果是位置固定的映射，那么应当 unmap 与其相交的部分
-        log::debug!("perm: {perm:?}");
-        if fixed {
-            log::error!("should unmap intersecting part");
-            self.insert_framed_area(vpn_range.start, vpn_range.end, perm);
-            Ok(vpn_range.start.0 as isize)
-        } else {
-            // 尝试在高地址空间找到一个合适的段来映射
-            let mut start = VirtPageNum((SECOND_START + PAGE_SIZE) >> PAGE_SIZE_BITS);
-            let len = vpn_range.end.0 - vpn_range.start.0;
-            for area in &self.areas {
-                // 高地址空间，但同时要控制住不溢出
-                if area.vpn_range.start > start && start < VirtPageNum(TRAMPOLINE >> PAGE_SIZE_BITS)
-                {
-                    if start.add(len) <= area.vpn_range.start {
-                        // TODO: 匿名映射的话，按照约定应当全部初始化为 0
-                        self.insert_framed_area(start, start.add(len), perm);
-                        return Ok(start.page_start().0 as isize);
-                    }
-                    start = area.vpn_range.end
-                }
-            }
-            Err(code::ENOMEM)
-        }
-    }
-    /// Assume that no conflicts.
-    pub fn insert_framed_area(
-        &mut self,
-        start_vpn: VirtPageNum,
-        end_vpn: VirtPageNum,
-        perm: MapPermission,
-    ) {
-        self.push(
-            MapArea {
-                vpn_range: start_vpn..end_vpn,
-                map_type: MapType::Framed {
-                    data_frames: BTreeMap::new(),
-                },
-                map_perm: perm,
-            },
-            0,
-            None,
-        );
-    }
-    pub fn remove_area_with_start_vpn(&mut self, start_vpn: VirtPageNum) {
-        if let Some(mut area) = self.areas.take(&MapArea::with_start_vpn(start_vpn)) {
-            area.unmap(&mut self.page_table);
-        }
-    }
-    fn push(&mut self, mut map_area: MapArea, start_offset: usize, data: Option<&[u8]>) {
-        map_area.map(&mut self.page_table);
-        if let Some(data) = data {
-            map_area.copy_data(&mut self.page_table, start_offset, data);
-        }
-        self.areas.insert(map_area);
-    }
-    /// Mention that trampoline is not collected by areas.
-    fn map_trampoline(&mut self) {
-        self.page_table.map(
-            VirtAddr(TRAMPOLINE).vpn(),
-            PhysAddr(strampoline as usize).ppn(),
-            PTEFlags::R | PTEFlags::X,
-        );
     }
 
     /// Without kernel stacks.
@@ -188,17 +107,6 @@ impl MemorySet {
             0,
             None,
         );
-        // log::info!("mapping .bss section");
-        // memory_set.push(
-        //     MapArea::new(
-        //         VirtAddr(sbss_with_stack as usize),
-        //         VirtAddr(ebss as usize),
-        //         MapType::Identical,
-        //         MapPermission::R | MapPermission::W,
-        //     ),
-        //     0,
-        //     None,
-        // );
         log::info!("mapping physical memory");
         memory_set.push(
             MapArea::new(
@@ -225,80 +133,20 @@ impl MemorySet {
         }
         memory_set
     }
-    /// 根据 ELF 文件内容加载所有 section，并且映射 trampoline、TrapContext 和用户栈，
-    /// 同时也会返回 `brk` 的初始值 和 `entry_point`
-    ///
-    /// ELF 标准参考 <https://www.sco.com/developers/gabi/latest/ch5.pheader.html>
-    /// 和 <https://github.com/riscv-non-isa/riscv-elf-psabi-doc/blob/master/riscv-elf.adoc>
-    pub fn from_elf(elf: &Elf, elf_data: &[u8]) -> (Self, usize, usize) {
-        let mut memory_set = Self::new_bare();
-        memory_set.map_trampoline();
 
-        // 映射 ELF 中所有段
-        assert!(elf.is_64);
-        log::debug!("e_flags: {:#b}", elf.header.e_flags);
-        assert_eq!(elf.header.e_type, ET_EXEC);
-        // 确定是 RISC-V 执行环境
-        assert_eq!(elf.header.e_machine, 243);
-        log::debug!("e_phoff: {}", elf.header.e_phoff);
-
-        let mut elf_base = 0;
-
-        // 加载段
-        let mut max_end_vpn = VirtPageNum(0);
-        for ph in &elf.program_headers {
-            log::debug!("ph_type: {:?}", program_header::pt_to_str(ph.p_type));
-            log::debug!("ph range: {:#x?}", ph.vm_range());
-            if ph.p_type == PT_LOAD {
-                // 记录一下 elf 的起始地址
-                if ph.p_offset == 0 {
-                    elf_base = ph.p_vaddr;
-                }
-                let start_va = VirtAddr(ph.p_vaddr as usize);
-                let start_offset = start_va.page_offset();
-                let end_va = VirtAddr((ph.p_vaddr + ph.p_memsz) as usize);
-                let mut map_perm = MapPermission::U;
-                if ph.p_flags & PF_R != 0 {
-                    map_perm |= MapPermission::R;
-                }
-                if ph.p_flags & PF_W != 0 {
-                    map_perm |= MapPermission::W;
-                }
-                if ph.p_flags & PF_X != 0 {
-                    map_perm |= MapPermission::X;
-                }
-                let map_area = MapArea::new(
-                    start_va,
-                    end_va,
-                    MapType::Framed {
-                        data_frames: BTreeMap::new(),
-                    },
-                    map_perm,
-                );
-                max_end_vpn = map_area.vpn_range.end;
-                memory_set.push(map_area, start_offset, Some(&elf_data[ph.file_range()]));
-                log::debug!("map_perm: {:?}", map_perm);
-            }
-        }
-        log::info!("entry point: {:#x}", elf.entry);
-        // We don't map user stack and trapframe here since they will be later
-        // allocated through TaskControlBlock::new()
-        let program_break = max_end_vpn.page_start().0;
-        (memory_set, program_break, elf.entry as usize)
-    }
     /// Copy an identical user_space
     pub fn from_existed_user(user_space: &MemorySet) -> MemorySet {
         let mut memory_set = Self::new_bare();
         // map trampoline
         memory_set.map_trampoline();
         // copy data sections/trap_context/user_stack
-        for area in user_space.areas.iter() {
+        for (_, area) in user_space.areas.iter() {
             let new_area = MapArea::from_another(area);
             memory_set.push(new_area, 0, None);
             // copy data from another space
             for vpn in area.vpn_range.clone() {
-                let src_ppn = user_space.translate(vpn).unwrap().ppn();
-                let mut dst_ppn = memory_set.translate(vpn).unwrap().ppn();
+                let src_ppn = user_space.translate(vpn).unwrap();
+                let mut dst_ppn = memory_set.translate(vpn).unwrap();
                 dst_ppn
                     .as_page_bytes_mut()
                     .copy_from_slice(src_ppn.as_page_bytes());
@@ -306,6 +154,103 @@ impl MemorySet {
         }
         memory_set
     }
+
+    pub fn token(&self) -> usize {
+        self.page_table.token()
+    }
+
+    /// 需保证 heap_start < new_vpn，且还有足够的虚地址和物理空间可以映射
+    pub fn set_user_brk(&mut self, new_end: VirtPageNum, heap_start: VirtPageNum) {
+        // 堆区已经映射过了，就扩张或者收缩。否则插入堆区
+        if let Some(map_area) = self.areas.get_mut(&heap_start) {
+            let curr_vpn = map_area.end();
+            if curr_vpn >= new_end {
+                map_area.shrink(new_end, &mut self.page_table);
+            } else {
+                map_area.expand(new_end, &mut self.page_table);
+            }
+        } else {
+            self.insert_framed_area(
+                heap_start,
+                new_end,
+                MapPermission::R | MapPermission::W | MapPermission::U,
+            );
+        }
+    }
+
+    /// 尝试根据 `vm_range` 进行映射
+    pub fn try_map(
+        &mut self,
+        vpn_range: Range<VirtPageNum>,
+        perm: MapPermission,
+        fixed: bool,
+    ) -> Result<isize> {
+        // TODO: 这里，如果是位置固定的映射，那么应当 unmap 与其相交的部分
+        log::debug!("perm: {perm:?}");
+        if fixed {
+            log::error!("should unmap intersecting part");
+            self.insert_framed_area(vpn_range.start, vpn_range.end, perm);
+            Ok(vpn_range.start.0 as isize)
+        } else {
+            // 尝试在高地址空间找到一个合适的段来映射
+            let mut start = VirtPageNum((SECOND_START) >> PAGE_SIZE_BITS);
+            let len = vpn_range.end.0 - vpn_range.start.0;
+            for (_, area) in &self.areas {
+                // 高地址空间，但同时要控制住不溢出
+                if area.vpn_range.start > start && start < VirtPageNum(TRAMPOLINE >> PAGE_SIZE_BITS)
+                {
+                    if start.add(len) <= area.vpn_range.start {
+                        // TODO: 匿名映射的话，按照约定应当全部初始化为 0
+                        self.insert_framed_area(start, start.add(len), perm);
+                        return Ok(start.page_start().0 as isize);
+                    }
+                    start = area.vpn_range.end
+                }
+            }
+            Err(code::ENOMEM)
+        }
+    }
+
+    /// 插入帧映射的一个内存段，假定是不会造成冲突的
+    pub fn insert_framed_area(
+        &mut self,
+        start_vpn: VirtPageNum,
+        end_vpn: VirtPageNum,
+        perm: MapPermission,
+    ) {
+        self.push(
+            MapArea {
+                vpn_range: start_vpn..end_vpn,
+                map_type: MapType::new_framed(),
+                map_perm: perm,
+            },
+            0,
+            None,
+        );
+    }
+
+    pub fn remove_area_with_start_vpn(&mut self, start_vpn: VirtPageNum) {
+        if let Some(mut area) = self.areas.remove(&start_vpn) {
+            area.unmap(&mut self.page_table);
+        }
+    }
+
+    pub fn push(&mut self, mut map_area: MapArea, start_offset: usize, data: Option<&[u8]>) {
+        map_area.map(&mut self.page_table);
+        if let Some(data) = data {
+            map_area.copy_data(&mut self.page_table, start_offset, data);
+        }
+        self.areas.insert(map_area.vpn_range.start, map_area);
+    }
+    /// trampoline 是不由 areas 收集的，因为它是在所有进程之间和内核之间共享的
+    pub fn map_trampoline(&mut self) {
+        self.page_table.map(
+            VirtAddr(TRAMPOLINE).vpn(),
+            PhysAddr(strampoline as usize).ppn(),
+            PTEFlags::R | PTEFlags::X,
+        );
+    }
+
     pub fn activate(&self) {
         let satp = self.page_table.token();
         unsafe {
@@ -313,7 +258,7 @@ impl MemorySet {
             core::arch::asm!("sfence.vma");
         }
     }
-    pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
+    pub fn translate(&self, vpn: VirtPageNum) -> Option<PhysPageNum> {
         self.page_table.translate(vpn)
     }
     pub fn recycle_data_pages(&mut self) {
@@ -337,7 +282,8 @@ pub enum MapType {
 }
 
 impl MapType {
-    pub fn framed() -> Self {
+    /// 空的帧映射
+    pub fn new_framed() -> Self {
         Self::Framed {
             data_frames: BTreeMap::new(),
         }
@@ -351,34 +297,7 @@ pub struct MapArea {
     map_perm: MapPermission,
 }
 
-impl PartialEq for MapArea {
-    fn eq(&self, other: &Self) -> bool {
-        self.vpn_range.start == other.vpn_range.start
-    }
-}
-
-impl Eq for MapArea {}
-
-impl PartialOrd for MapArea {
-    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        self.vpn_range.start.partial_cmp(&other.vpn_range.start)
-    }
-}
-
-impl Ord for MapArea {
-    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        self.partial_cmp(other).unwrap()
-    }
-}
-
 impl MapArea {
-    pub fn with_start_vpn(start_vpn: VirtPageNum) -> Self {
-        Self {
-            vpn_range: start_vpn..start_vpn,
-            map_type: MapType::Identical,
-            map_perm: MapPermission::empty(),
-        }
-    }
     pub fn new(
         start_va: VirtAddr,
         end_va: VirtAddr,
@@ -431,6 +350,24 @@ impl MapArea {
             self.unmap_one(page_table, vpn);
         }
     }
+    #[inline]
+    pub fn end(&self) -> VirtPageNum {
+        self.vpn_range.end
+    }
+    /// 尝试收缩末尾区域
+    pub fn shrink(&mut self, new_end: VirtPageNum, page_table: &mut PageTable) {
+        for vpn in new_end..self.end() {
+            self.unmap_one(page_table, vpn);
+        }
+        self.vpn_range.end = new_end;
+    }
+    /// 尝试扩展末尾区域
+    pub fn expand(&mut self, new_end: VirtPageNum, page_table: &mut PageTable) {
+        for vpn in self.end()..new_end {
+            self.map_one(page_table, vpn);
+        }
+        self.vpn_range.end = new_end;
+    }
     /// 约定：当前逻辑段必须是 `Framed` 的。而且 `data` 的长度不得超过逻辑段长度。
     pub fn copy_data(&mut self, page_table: &mut PageTable, start_offset: usize, data: &[u8]) {
         assert!(matches!(self.map_type, MapType::Framed { .. }));
@@ -442,12 +379,11 @@ impl MapArea {
         page_table
             .translate(curr_vpn)
             .unwrap()
-            .ppn()
             .copy_from(start_offset, first_block);
         curr_vpn.0 += 1;
 
         for chunk in rest.chunks(PAGE_SIZE) {
-            let mut dst = page_table.translate(curr_vpn).unwrap().ppn();
+            let mut dst = page_table.translate(curr_vpn).unwrap();
             dst.copy_from(0, chunk);
             curr_vpn.0 += 1;
         }
