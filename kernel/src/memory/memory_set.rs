@@ -1,21 +1,18 @@
 //! Implementation of [`MapArea`] and [`MemorySet`].
 
 use super::{
-    frame_alloc, FrameTracker, PTEFlags, PageTable, PageTableEntry, PhysAddr, PhysPageNum,
-    VirtAddr, VirtPageNum,
+    frame_alloc, FrameTracker, PTEFlags, PageTable, PhysAddr, PhysPageNum, VirtAddr, VirtPageNum,
 };
 use crate::{
     config::{MEMORY_END, MMIO, PAGE_SIZE, PAGE_SIZE_BITS, SECOND_START, TRAMPOLINE},
-    error::{code, Result},
     sync::UPSafeCell,
+    syscall::MmapProt,
+    utils::error::{code, Result},
 };
 
-use alloc::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use alloc::{collections::BTreeMap, sync::Arc};
 use bitflags::bitflags;
-use core::ops::Range;
+use core::{assert_matches::assert_matches, ops::Range};
 use lazy_static::*;
 use riscv::register::satp;
 
@@ -46,7 +43,7 @@ pub fn kernel_token() -> usize {
 
 /// memory set structure, controls virtual-memory space
 pub struct MemorySet {
-    page_table: PageTable,
+    pub page_table: PageTable,
     // 起始 vpn 映射到 MapArea
     areas: BTreeMap<VirtPageNum, MapArea>,
 }
@@ -147,9 +144,11 @@ impl MemorySet {
             for vpn in area.vpn_range.clone() {
                 let src_ppn = user_space.translate(vpn).unwrap();
                 let mut dst_ppn = memory_set.translate(vpn).unwrap();
-                dst_ppn
-                    .as_page_bytes_mut()
-                    .copy_from_slice(src_ppn.as_page_bytes());
+                unsafe {
+                    dst_ppn
+                        .as_page_bytes_mut()
+                        .copy_from_slice(src_ppn.as_page_bytes());
+                }
             }
         }
         memory_set
@@ -319,6 +318,9 @@ impl MapArea {
             map_perm: another.map_perm,
         }
     }
+    pub fn len(&self) -> usize {
+        self.vpn_range.end.0.saturating_sub(self.vpn_range.start.0) * PAGE_SIZE
+    }
     pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         let ppn;
         match &mut self.map_type {
@@ -370,22 +372,28 @@ impl MapArea {
     }
     /// 约定：当前逻辑段必须是 `Framed` 的。而且 `data` 的长度不得超过逻辑段长度。
     pub fn copy_data(&mut self, page_table: &mut PageTable, start_offset: usize, data: &[u8]) {
-        assert!(matches!(self.map_type, MapType::Framed { .. }));
+        assert_matches!(self.map_type, MapType::Framed { .. });
         assert!(start_offset < PAGE_SIZE);
+        assert!(data.len() <= self.len());
         let mut curr_vpn = self.vpn_range.start;
 
         let (first_block, rest) = data.split_at((PAGE_SIZE - start_offset).min(data.len()));
+        log::debug!("first_block: {:#x}", first_block.len());
+        log::debug!("rest: {:#x}", rest.len());
 
-        page_table
-            .translate(curr_vpn)
-            .unwrap()
-            .copy_from(start_offset, first_block);
-        curr_vpn.0 += 1;
+        unsafe {
+            page_table
+                .translate(curr_vpn)
+                .unwrap()
+                .copy_from(start_offset, first_block);
 
-        for chunk in rest.chunks(PAGE_SIZE) {
-            let mut dst = page_table.translate(curr_vpn).unwrap();
-            dst.copy_from(0, chunk);
             curr_vpn.0 += 1;
+
+            for chunk in rest.chunks(PAGE_SIZE) {
+                let mut dst = page_table.translate(curr_vpn).unwrap();
+                dst.copy_from(0, chunk);
+                curr_vpn.0 += 1;
+            }
         }
     }
 }
@@ -400,8 +408,8 @@ bitflags! {
     }
 }
 
-impl Into<PTEFlags> for MapPermission {
-    fn into(self) -> PTEFlags {
-        PTEFlags::from_bits_truncate(self.bits)
+impl From<MmapProt> for MapPermission {
+    fn from(mmap_prot: MmapProt) -> Self {
+        Self::from_bits_truncate((mmap_prot.bits() << 1) as u8) | MapPermission::U
     }
 }

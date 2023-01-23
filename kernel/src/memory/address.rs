@@ -1,7 +1,4 @@
-use core::{
-    iter::Step,
-    ops::{RangeBounds, RangeFrom},
-};
+use core::iter::Step;
 
 use crate::config::{PAGE_SIZE, PAGE_SIZE_BITS, PTE_PER_PAGE};
 
@@ -27,11 +24,13 @@ impl PhysAddr {
     pub fn ppn(&self) -> PhysPageNum {
         self.floor()
     }
-    pub fn as_ref<T>(&self) -> &'static T {
-        unsafe { (self.0 as *const T).as_ref().unwrap() }
+    /// 需要保证该地址转化为 T 后内容合法且不会越过页边界
+    pub unsafe fn as_ref<T>(&self) -> &'static T {
+        (self.0 as *const T).as_ref().unwrap()
     }
-    pub fn as_mut<T>(&self) -> &'static mut T {
-        unsafe { (self.0 as *mut T).as_mut().unwrap() }
+    /// 需要保证该地址转化为 T 后内容合法且不会越过页边界
+    pub unsafe fn as_mut<T>(&self) -> &'static mut T {
+        (self.0 as *mut T).as_mut().unwrap()
     }
     pub fn add(self, offset: usize) -> Self {
         Self(self.0 + offset)
@@ -46,35 +45,32 @@ impl PhysPageNum {
     pub fn page_start(&self) -> PhysAddr {
         PhysAddr(self.0 << PAGE_SIZE_BITS)
     }
-    pub fn as_page_ptes(&self) -> &'static [PageTableEntry; PTE_PER_PAGE] {
-        self.as_ref()
+    /// 需要确保该页确实存放页表
+    pub unsafe fn as_page_ptes(&self) -> &'static [PageTableEntry; PTE_PER_PAGE] {
+        self.page_start().as_ref()
     }
-    pub fn as_page_ptes_mut(&mut self) -> &'static mut [PageTableEntry; PTE_PER_PAGE] {
-        self.as_mut()
+    /// 需要确保该页确实存放页表
+    pub unsafe fn as_page_ptes_mut(&mut self) -> &'static mut [PageTableEntry; PTE_PER_PAGE] {
+        self.page_start().as_mut()
     }
+    /// 任何页都可以转化为字节数组。但可能造成 alias，所以不太清除该不该标为 `unsafe`
     pub fn as_page_bytes(&self) -> &'static [u8; PAGE_SIZE] {
-        self.as_ref()
+        unsafe { self.page_start().as_ref() }
     }
-    pub fn as_page_bytes_mut(&mut self) -> &'static mut [u8; PAGE_SIZE] {
-        self.as_mut()
-    }
-    pub fn as_ref<T>(&self) -> &'static T {
-        let pa = self.page_start();
-        unsafe { (pa.0 as *mut T).as_ref().unwrap() }
-    }
-    pub fn as_mut<T>(&mut self) -> &'static mut T {
-        let pa = self.page_start();
-        unsafe { (pa.0 as *mut T).as_mut().unwrap() }
+    /// 既然是 `mut` 就标为 `unsafe` 吧，需要保证 non-alias
+    pub unsafe fn as_page_bytes_mut(&mut self) -> &'static mut [u8; PAGE_SIZE] {
+        self.page_start().as_mut()
     }
     /// 将 `src` 中的数据复制到该页中。
     ///
     /// 需要保证 `src` 与该页不相交且长度不超过页长
-    pub fn copy_from(&mut self, offset: usize, src: &[u8]) {
+    pub unsafe fn copy_from(&mut self, offset: usize, src: &[u8]) {
         let pa = self.page_start();
-        unsafe {
-            let dst = core::slice::from_raw_parts_mut((pa.0 + offset) as _, src.len());
-            dst.copy_from_slice(src);
-        };
+        let dst = core::slice::from_raw_parts_mut(pa.add(offset).0 as *mut u8, src.len());
+        // for (dst_byte, src_byte) in dst.iter_mut().zip(src) {
+        //     *dst_byte = *src_byte;
+        // }
+        dst.copy_from_slice(src);
     }
 }
 
@@ -83,7 +79,7 @@ impl PhysPageNum {
 /// 由于 63~39 和 38 位保持一致，虚拟地址空间中只有 64 位的最低 256 GB 地址和最高 256 GB 地址有效。
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
-pub struct VirtAddr(pub(crate) usize);
+pub struct VirtAddr(pub usize);
 
 impl VirtAddr {
     #[inline]
@@ -95,7 +91,7 @@ impl VirtAddr {
     pub const fn vpn_floor(&self) -> VirtPageNum {
         VirtPageNum(self.0 >> PAGE_SIZE_BITS)
     }
-    // 当前虚地址所在的虚拟页号
+    /// 当前虚地址所在的虚拟页号
     #[inline]
     pub const fn vpn(&self) -> VirtPageNum {
         self.vpn_floor()
@@ -104,6 +100,22 @@ impl VirtAddr {
     #[inline]
     pub const fn vpn_ceil(&self) -> VirtPageNum {
         VirtPageNum((self.0 - 1 + PAGE_SIZE) / PAGE_SIZE)
+    }
+    #[inline]
+    pub const fn add(&self, offset: usize) -> Self {
+        Self(self.0 + offset)
+    }
+}
+
+impl<T> From<*const T> for VirtAddr {
+    fn from(ptr: *const T) -> Self {
+        Self(ptr as usize)
+    }
+}
+
+impl<T> From<*mut T> for VirtAddr {
+    fn from(ptr: *mut T) -> Self {
+        Self(ptr as usize)
     }
 }
 

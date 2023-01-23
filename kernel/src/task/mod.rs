@@ -9,23 +9,25 @@
 //! Be careful when you see [`__switch`]. Control flow around this function
 //! might not be what you expect.
 
+mod clone_flags;
 mod context;
 mod id;
 mod manager;
 mod process;
 mod processor;
 mod switch;
-mod tcb;
+mod thread;
 
+pub use clone_flags::CloneFlags;
 pub use context::TaskContext;
-pub use id::{kstack_alloc, pid_alloc, KernelStack, PidHandle, TaskUserRes};
+pub use id::{kstack_alloc, pid_alloc, KernelStack, PidHandle, ThreadUserRes};
 pub use manager::add_task;
 pub use process::{ProcessControlBlock, ProcessControlBlockInner};
 pub use processor::{
     current_page_table, current_process, current_task, current_trap_ctx, current_trap_ctx_user_va,
     current_user_token, run_tasks,
 };
-pub use tcb::{TaskControlBlock, TaskStatus};
+pub use thread::{ThreadControlBlock, ThreadStatus};
 
 use crate::loader::Loader;
 use alloc::{sync::Arc, vec::Vec};
@@ -37,9 +39,9 @@ use switch::__switch;
 
 pub fn block_current_and_run_next() {
     let task = take_current_task().unwrap();
-    let mut task_inner = task.inner_exclusive_access();
+    let mut task_inner = task.inner();
     let task_ctx_ptr = &mut task_inner.task_ctx as *mut TaskContext;
-    task_inner.task_status = TaskStatus::Blocking;
+    task_inner.thread_status = ThreadStatus::Blocking;
     drop(task_inner);
     schedule(task_ctx_ptr);
 }
@@ -50,11 +52,11 @@ pub fn suspend_current_and_run_next() {
     let task = take_current_task().unwrap();
 
     // ---- access current TCB exclusively
-    let mut task_inner = task.inner_exclusive_access();
+    let mut task_inner = task.inner();
 
     let task_ctx_ptr = &mut task_inner.task_ctx as *mut TaskContext;
     // Change status to Ready
-    task_inner.task_status = TaskStatus::Ready;
+    task_inner.thread_status = ThreadStatus::Ready;
     drop(task_inner);
     // ---- release current PCB
 
@@ -67,7 +69,7 @@ pub fn suspend_current_and_run_next() {
 /// Exit current task, recycle process resources and switch to the next task
 pub fn exit_current_and_run_next(exit_code: i32) -> ! {
     let task = take_current_task().unwrap();
-    let mut task_inner = task.inner_exclusive_access();
+    let mut task_inner = task.inner();
     let process = task.process.upgrade().unwrap();
     let tid = task_inner.res.as_ref().unwrap().tid;
     // Record exit code
@@ -81,7 +83,7 @@ pub fn exit_current_and_run_next(exit_code: i32) -> ! {
     // debug!("task {} dropped", tid);
 
     if tid == 0 {
-        let mut process_inner = process.inner_exclusive_access();
+        let mut process_inner = process.inner();
         // mark this process as a zombie process
         process_inner.is_zombie = true;
         // record exit code of main process
@@ -89,29 +91,29 @@ pub fn exit_current_and_run_next(exit_code: i32) -> ! {
 
         // move all its children to INITPROC
         if process.pid.0 != 0 {
-            let mut initproc_inner = INITPROC.inner_exclusive_access();
+            let mut initproc_inner = INITPROC.inner();
             for child in mem::take(&mut process_inner.children) {
-                child.inner_exclusive_access().parent = Arc::downgrade(&INITPROC);
+                child.inner().parent = Arc::downgrade(&INITPROC);
                 initproc_inner.children.push(child);
             }
         }
         // 虽然先收集再 clear() 很奇怪，但 TaskUserRes 的 drop 需要借用 process_inner
         // 所以需要先将这里的 process_inner drop 后才可以清除
-        let mut recycle_res = Vec::<TaskUserRes>::new();
+        let mut recycle_res = Vec::<ThreadUserRes>::new();
 
         // deallocate user res (including tid/trap_ctx/ustack) of all threads
         // it has to be done before we dealloc the whole memory_set
         // otherwise they will be deallocated twice
-        for task in process_inner.tasks.iter().filter(|t| t.is_some()) {
+        for task in process_inner.threads.iter().filter(|t| t.is_some()) {
             let task = task.as_ref().unwrap();
-            let mut task_inner = task.inner_exclusive_access();
+            let mut task_inner = task.inner();
             if let Some(res) = task_inner.res.take() {
                 recycle_res.push(res);
             }
         }
         drop(process_inner);
         recycle_res.clear();
-        let mut process_inner = process.inner_exclusive_access();
+        let mut process_inner = process.inner();
         // debug!("deallocate pcb res");
         process_inner.children.clear();
         // deallocate other data in user space i.e. program code/data section
@@ -135,7 +137,7 @@ lazy_static! {
     /// but we have user_shell, so we don't need to change it.
     pub static ref INITPROC: Arc<ProcessControlBlock> = {
         let pcb = ProcessControlBlock::new();
-        Loader::load(&mut pcb.inner_exclusive_access(), "initproc", Vec::new()).expect("INITPROC Failed.");
+        Loader::load(&mut pcb.inner(), "initproc", Vec::new()).expect("INITPROC Failed.");
         pcb
     };
 }

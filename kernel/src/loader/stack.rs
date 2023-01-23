@@ -1,10 +1,6 @@
 use alloc::{string::String, vec::Vec};
 
-use crate::{
-    config::PTR_SIZE,
-    mm::{PageTable, VirtAddr},
-    timer::get_time,
-};
+use crate::{config::PTR_SIZE, memory::PageTable, utils::timer::get_time};
 
 use super::AT_RANDOM;
 
@@ -22,13 +18,17 @@ pub struct InfoBlock {
 impl StackInit {
     pub fn push_str(&mut self, s: &str) -> usize {
         self.sp -= s.len() + 1;
-        let mut ptr = self.sp;
+        let mut ptr = self.sp as *mut u8;
         // TODO: 这里或许可以优化？总之目前是一个字节推一次，比较浪费
-        for &byte in s.as_bytes() {
-            *self.pt.trans_va_as_mut(VirtAddr(ptr)).unwrap() = byte;
-            ptr += 1;
+        unsafe {
+            for &byte in s.as_bytes() {
+                // 这里一定是栈初始化，所以用户栈没问题就是 safe 的
+                *self.pt.trans_ptr_mut(ptr).unwrap() = byte;
+                ptr = ptr.add(1);
+            }
+            // 按规范而言，这里的字符串都是符合 c 标准的字符串，末尾为 `\0`
+            *self.pt.trans_ptr_mut(ptr).unwrap() = 0u8;
         }
-        *self.pt.trans_va_as_mut(VirtAddr(ptr)).unwrap() = 0u8;
         self.sp
     }
 
@@ -40,7 +40,10 @@ impl StackInit {
 
     pub fn push_usize(&mut self, ptr: usize) {
         self.sp -= PTR_SIZE;
-        *self.pt.trans_va_as_mut(VirtAddr(self.sp)).unwrap() = ptr;
+        // 用户栈不出问题则是 safe
+        unsafe {
+            *self.pt.trans_ptr_mut(self.sp as _).unwrap() = ptr;
+        }
     }
 
     /// 由于用户库需要 argv 放入 a1 寄存器，这里返回一下。

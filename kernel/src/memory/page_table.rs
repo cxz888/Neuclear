@@ -1,11 +1,11 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
-use crate::config::PAGE_SIZE;
-use crate::syscall::MmapProt;
-
 use super::{
     frame_alloc, FrameTracker, MapPermission, PhysAddr, PhysPageNum, VirtAddr, VirtPageNum,
 };
+use crate::config::PAGE_SIZE;
+
+use _core::ops::AddAssign;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -23,6 +23,12 @@ bitflags! {
         const G = 1 << 5;
         const A = 1 << 6;
         const D = 1 << 7;
+    }
+}
+
+impl From<MapPermission> for PTEFlags {
+    fn from(mp: MapPermission) -> Self {
+        Self::from_bits_truncate(mp.bits())
     }
 }
 
@@ -85,7 +91,8 @@ impl PageTable {
         let mut ppn = self.root_ppn;
         let mut ret: Option<&mut PageTableEntry> = None;
         for (i, &idx) in idxs.iter().enumerate() {
-            let pte = &mut ppn.as_page_ptes_mut()[idx];
+            // 因为从 root_ppn 开始，只要保证 root_ppn 合法则 pte 合法
+            let pte = unsafe { &mut ppn.as_page_ptes_mut()[idx] };
             // 这里假定为 3 级页表
             if i == 2 {
                 ret = Some(pte);
@@ -106,7 +113,8 @@ impl PageTable {
         let mut ppn = self.root_ppn;
         let mut ret = None;
         for idx in idxs {
-            let pte = &ppn.as_page_ptes()[idx];
+            // 因为从 root_ppn 开始，只要保证 root_ppn 合法则 pte 合法
+            let pte = unsafe { &ppn.as_page_ptes()[idx] };
             if !pte.is_valid() {
                 return None;
             }
@@ -133,63 +141,68 @@ impl PageTable {
     pub fn translate(&self, vpn: VirtPageNum) -> Option<PhysPageNum> {
         self.find_pte(vpn).copied().map(|pte| pte.ppn())
     }
-    pub fn translate_va_to_pa(&self, va: VirtAddr) -> Option<PhysAddr> {
+    pub fn trans_va_to_pa(&self, va: VirtAddr) -> Option<PhysAddr> {
         self.find_pte(va.vpn_floor()).map(|pte| {
             let aligned_pa = pte.ppn().page_start();
             aligned_pa.add(va.page_offset())
         })
     }
+    /// 转换用户指针（虚地址）。需要保证该指针指向的是合法的 T，且不会跨越页边界
     #[inline]
-    pub fn trans_va_as_ref<T>(&self, va: VirtAddr) -> Option<&'static T> {
-        self.translate_va_to_pa(va).map(|pa| pa.as_ref())
+    pub unsafe fn trans_ptr<T>(&self, ptr: *const T) -> Option<&'static T> {
+        self.trans_va_to_pa(VirtAddr::from(ptr))
+            .map(|pa| pa.as_ref())
     }
+    /// 转换用户指针（虚地址）。需要保证该指针指向的是合法的 T，且不会跨越页边界
     #[inline]
-    pub fn trans_va_as_mut<T>(&self, va: VirtAddr) -> Option<&'static mut T> {
-        self.translate_va_to_pa(va).map(|pa| pa.as_mut())
+    pub unsafe fn trans_ptr_mut<T>(&mut self, ptr: *mut T) -> Option<&'static mut T> {
+        self.trans_va_to_pa(VirtAddr::from(ptr))
+            .map(|pa| pa.as_mut())
     }
     #[inline]
     pub fn token(&self) -> usize {
         (satp::Mode::Sv39 as usize) << 60 | self.root_ppn.0
     }
-    pub fn translate_str(&self, ptr: *const u8) -> Option<String> {
-        let mut string = String::new();
-        let mut va = ptr as usize;
+    /// 需要保证 `ptr` 指向合法的 utf-8 字符串
+    pub unsafe fn trans_str(&mut self, mut ptr: *const u8) -> Option<String> {
+        let mut string = Vec::new();
         // 逐字节地读入字符串，效率较低，但因为字符串可能跨页存在需要如此。
         // NOTE: 可以进一步优化，如一次读一页等
         loop {
-            let ch: u8 = *(self.trans_va_as_mut(VirtAddr(va))?);
+            let ch: u8 = *(self.trans_ptr(ptr)?);
             if ch == 0 {
                 break;
             } else {
-                string.push(ch as char);
-                va += 1;
+                string.push(ch);
+                ptr = ptr.add(1);
             }
         }
-        Some(string)
+        String::from_utf8(string).ok()
     }
-}
-
-/// translate a pointer to a mutable u8 Vec through page table
-pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&'static mut [u8]> {
-    let page_table = PageTable::from_token(token);
-    let mut start = ptr as usize;
-    let end = start + len;
-    let mut v = Vec::with_capacity(len / PAGE_SIZE + 2);
-    while start < end {
-        let start_va = VirtAddr(start);
-        let mut vpn = start_va.vpn_floor();
-        let mut ppn = page_table.translate(vpn).unwrap();
-        vpn.0 += 1;
-        let mut end_va = vpn.page_start();
-        end_va = end_va.min(VirtAddr(end));
-        if end_va.page_offset() == 0 {
-            v.push(&mut ppn.as_page_bytes_mut()[start_va.page_offset()..]);
-        } else {
-            v.push(&mut ppn.as_page_bytes_mut()[start_va.page_offset()..end_va.page_offset()]);
+    /// 最好保证 non-alias。不过一般是用户 buffer
+    pub unsafe fn trans_byte_buffer(
+        &mut self,
+        ptr: *const u8,
+        len: usize,
+    ) -> Vec<&'static mut [u8]> {
+        let mut start = VirtAddr::from(ptr);
+        let end = start.add(len);
+        let mut v = Vec::with_capacity(len / PAGE_SIZE + 2);
+        while start < end {
+            let mut vpn = start.vpn();
+            let mut ppn = self.translate(vpn).unwrap();
+            vpn.0 += 1;
+            let mut seg_end = vpn.page_start();
+            seg_end = seg_end.min(end);
+            if seg_end.page_offset() == 0 {
+                v.push(&mut ppn.as_page_bytes_mut()[start.page_offset()..]);
+            } else {
+                v.push(&mut ppn.as_page_bytes_mut()[start.page_offset()..seg_end.page_offset()]);
+            }
+            start = seg_end;
         }
-        start = end_va.0;
+        v
     }
-    v
 }
 
 /// An abstraction over a buffer passed from user space to kernel space

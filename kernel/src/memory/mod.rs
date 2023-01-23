@@ -1,11 +1,3 @@
-//! Memory management implementation
-//!
-//! SV39 page-based virtual-memory architecture for RV64 systems, and
-//! everything about memory management, like frame allocator, page table,
-//! map area and memory set, is implemented here.
-//!
-//! Every task or process has a memory_set to control its virtual memory.
-
 mod address;
 mod frame_allocator;
 mod heap_allocator;
@@ -15,7 +7,7 @@ mod page_table;
 pub use address::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 pub use frame_allocator::{frame_alloc, frame_dealloc, FrameTracker};
 pub use memory_set::{kernel_token, MapArea, MapPermission, MapType, MemorySet, KERNEL_SPACE};
-pub use page_table::{translated_byte_buffer, PTEFlags, PageTable, PageTableEntry, UserBuffer};
+pub use page_table::{PTEFlags, PageTable, PageTableEntry, UserBuffer};
 
 /// initiate heap allocator, frame allocator and kernel space
 pub fn init() {

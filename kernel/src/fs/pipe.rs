@@ -1,5 +1,5 @@
 use super::File;
-use crate::mm::UserBuffer;
+use crate::memory::UserBuffer;
 use crate::sync::UPSafeCell;
 use alloc::sync::{Arc, Weak};
 

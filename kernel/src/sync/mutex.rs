@@ -1,7 +1,7 @@
 use super::UPSafeCell;
 use crate::task::add_task;
 use crate::task::current_task;
-use crate::task::TaskControlBlock;
+use crate::task::ThreadControlBlock;
 use crate::task::{block_current_and_run_next, suspend_current_and_run_next};
 use alloc::{collections::VecDeque, sync::Arc};
 
@@ -49,7 +49,7 @@ pub struct MutexBlocking {
 
 pub struct MutexBlockingInner {
     locked: bool,
-    wait_queue: VecDeque<Arc<TaskControlBlock>>,
+    wait_queue: VecDeque<Arc<ThreadControlBlock>>,
 }
 
 impl MutexBlocking {

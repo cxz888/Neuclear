@@ -1,78 +1,104 @@
 //! Process management syscalls
 
 use crate::{
-    config::MAX_SYSCALL_NUM,
-    error::{code, Result},
-    mm::{PageTable, VirtAddr},
+    config::SIGSET_SIZE_BYTES,
+    memory::{PageTable, VirtAddr},
+    signal::{Signal, SignalAction, SignalSet},
     syscall::flags::{MmapFlags, MmapProt},
     task::{
         current_page_table, current_process, current_task, exit_current_and_run_next,
-        suspend_current_and_run_next, TaskStatus,
+        suspend_current_and_run_next, CloneFlags, ThreadStatus,
     },
-    timer::get_time_us,
+    utils::{
+        error::{code, Result},
+        structs::{TimeVal, UtsName},
+        timer::get_time_us,
+    },
 };
 use alloc::{string::String, sync::Arc, vec::Vec};
+use num_enum::TryFromPrimitive;
 
+/// 退出当前任务并设置其退出码为 `exit_code & 0xff`，该函数不返回
 pub fn sys_exit(exit_code: i32) -> ! {
-    exit_current_and_run_next(exit_code)
+    // TODO: 退出需要给其父进程发送 `SIGCHLD` 信号
+    exit_current_and_run_next(exit_code & 0xff)
 }
 
-/// current task gives up resources for other tasks
+/// 挂起当前任务，永不失败。返回 0
 pub fn sys_yield() -> Result {
     suspend_current_and_run_next();
     Ok(0)
 }
 
+/// 返回当前进程 id，永不失败
 pub fn sys_getpid() -> Result {
-    Ok(current_task().unwrap().process.upgrade().unwrap().pid() as isize)
+    Ok(current_process().pid() as isize)
 }
 
-/// Syscall Fork which returns 0 for child process and child_pid for parent process
-pub fn sys_fork() -> Result {
+/// 返回当前进程的父进程的 id，永不失败
+pub fn sys_getppid() -> Result {
+    Ok(current_process().inner().parent.upgrade().unwrap().pid() as isize)
+}
+
+/// 创建子任务，通过 flags 进行精确控制。
+pub fn sys_clone(flags: usize, user_stack: usize, ptid: usize, tls: usize, ctid: usize) -> Result {
+    // TODO: 完善 sys_clone()
+    if u32::try_from(flags).is_err() {
+        log::error!("flags 超过 u32：{flags:#b}");
+        return Err(code::TEMP);
+    }
+    // 参考 https://man7.org/linux/man-pages/man2/clone.2.html，低 8 位是 exit_signal，其余是 clone flags
+    let Some(clone_flags) = CloneFlags::from_bits((flags as u32) & !0xff) else {
+        log::error!("未定义的 Clone Flags：{:#b}",flags & !0xff);
+        return Err(code::TEMP);
+    };
+    let Ok(exit_signal) = Signal::try_from(flags as u8) else {
+        log::error!("未定义的信号：{:#b}",flags as u8);
+        return Err(code::TEMP);
+    };
+    if !clone_flags.is_empty() {
+        log::error!("Clone Flags 包含暂未实现的内容：{clone_flags:?}");
+        return Err(code::TEMP);
+    }
+
     let current_process = current_process();
     let new_process = current_process.fork();
     let new_pid = new_process.pid();
-    // modify trap context of new_task, because it returns immediately after switching
-    let new_process_inner = new_process.inner_exclusive_access();
-    let task = new_process_inner.tasks[0].as_ref().unwrap();
-    let trap_ctx = task.inner_exclusive_access().trap_ctx();
-    // we do not have to move to next instruction since we have done it before
-    // for child process, fork returns 0
+    let new_process_inner = new_process.inner();
+    let thread = new_process_inner.main_thread();
+    let trap_ctx = thread.inner().trap_ctx();
     trap_ctx.x[10] = 0;
     Ok(new_pid as isize)
 }
 
 /// 将当前进程的地址空间清空并加载一个特定的可执行文件，返回用户态后开始它的执行。返回参数个数
 ///
-/// ## 参数：
+/// 参数：
 /// - `path` 给出了要加载的可执行文件的名字，必须以 `\0` 结尾
 /// - `args` 给出了参数列表。其最后一个元素必须是一个 0
 pub fn sys_exec(path: *const u8, mut args: *const usize) -> Result {
-    let page_table = current_page_table();
-
-    let path = page_table.translate_str(path).ok_or(code::TEMP)?;
-    let mut args_vec: Vec<String> = Vec::new();
-    // 收集参数列表
-    loop {
-        let &arg_str_ptr = page_table
-            .trans_va_as_ref::<usize>(VirtAddr(args as usize))
-            .ok_or(code::TEMP)?;
-        if arg_str_ptr == 0 {
-            break;
-        }
-        args_vec.push(
-            page_table
-                .translate_str(arg_str_ptr as *const u8)
-                .ok_or(code::TEMP)?,
-        );
-        unsafe {
+    let mut page_table = current_page_table();
+    unsafe {
+        let path = page_table.trans_str(path).ok_or(code::TEMP)?;
+        let mut args_vec: Vec<String> = Vec::new();
+        // 收集参数列表
+        loop {
+            let arg_str_ptr = *page_table.trans_ptr::<usize>(args).ok_or(code::TEMP)?;
+            if arg_str_ptr == 0 {
+                break;
+            }
+            args_vec.push(
+                page_table
+                    .trans_str(arg_str_ptr as *const u8)
+                    .ok_or(code::TEMP)?,
+            );
             args = args.add(1);
         }
+        let process = current_process();
+        let argc = args_vec.len();
+        process.exec(&path, args_vec)?;
+        Ok(argc as isize)
     }
-    let process = current_process();
-    let argc = args_vec.len();
-    process.exec(&path, args_vec)?;
-    Ok(argc as isize)
 }
 
 /// If there is not a child process whose pid is same as given, return -1.
@@ -81,37 +107,30 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> Result {
     let process = current_process();
 
     // find a child process
-    let mut inner = process.inner_exclusive_access();
-    let pair = inner.children.iter().enumerate().find(|(_, p)| {
-        p.inner_exclusive_access().is_zombie && (pid == -1 || pid as usize == p.pid())
-    });
+    let mut inner = process.inner();
+    let pair = inner
+        .children
+        .iter()
+        .enumerate()
+        .find(|(_, p)| p.inner().is_zombie && (pid == -1 || pid as usize == p.pid()));
     let (idx, _) = pair.ok_or(code::EAGAIN)?;
     let child = inner.children.remove(idx);
     // confirm that child will be deallocated after removing from children list
     assert_eq!(Arc::strong_count(&child), 1);
     let found_pid = child.pid();
-    let exit_code = child.inner_exclusive_access().exit_code;
-    let page_table = PageTable::from_token(inner.memory_set.token());
-    *page_table
-        .trans_va_as_mut(VirtAddr(exit_code_ptr as usize))
-        .unwrap() = exit_code;
+    let exit_code = child.inner().exit_code;
+    let mut pt = PageTable::from_token(inner.memory_set.token());
+    unsafe {
+        *pt.trans_ptr_mut(exit_code_ptr).ok_or(code::EFAULT)? = exit_code;
+    }
     Ok(found_pid as isize)
-}
-
-#[repr(C)]
-#[derive(Debug)]
-pub struct TimeVal {
-    pub sec: usize,
-    pub usec: usize,
 }
 
 const MICRO_PER_SEC: usize = 1_000_000;
 
 pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> Result {
-    let page_table = current_page_table();
-    let ts = page_table
-        .trans_va_as_mut::<TimeVal>(VirtAddr(ts as usize))
-        .ok_or(code::TEMP)?;
+    let mut pt = current_page_table();
+    let ts = unsafe { pt.trans_ptr_mut(ts).ok_or(code::TEMP)? };
     let us = get_time_us();
     ts.sec = us / MICRO_PER_SEC;
     ts.usec = us % MICRO_PER_SEC;
@@ -120,8 +139,7 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> Result {
 
 #[derive(Clone, Copy)]
 pub struct TaskInfo {
-    pub status: TaskStatus,
-    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+    pub status: ThreadStatus,
     pub time: usize,
 }
 
@@ -187,7 +205,7 @@ pub fn sys_mmap(addr: usize, len: usize, prot: u32, flags: u32, fd: i32, offset:
         }
         let process = current_process();
         log::debug!("pid: {}", process.pid());
-        let mut inner = process.inner_exclusive_access();
+        let mut inner = process.inner();
         return inner.memory_set.try_map(
             VirtAddr(addr).vpn()..VirtAddr(addr + len).vpn(),
             prot.into(),
@@ -224,8 +242,8 @@ pub fn sys_spawn(_path: *const u8) -> Result {
 /// - `tidptr`
 pub fn sys_set_tid_address(tidptr: *const i32) -> Result {
     // NOTE: 在 linux 手册中，`tidptr` 的类型是 int*。这里设置为 i32，是参考 libc crate 设置 c_int=i32
-    let task = current_task().unwrap();
-    let mut inner = task.inner_exclusive_access();
+    let thread = current_task().unwrap();
+    let mut inner = thread.inner();
     inner.clear_child_tid = tidptr as usize;
     Ok(inner.res.as_ref().unwrap().tid as isize)
 }
@@ -238,7 +256,102 @@ pub fn sys_set_tid_address(tidptr: *const i32) -> Result {
 /// - `brk` 希望设置的 program break 值
 pub fn sys_brk(brk: usize) -> Result {
     let process = current_process();
-    let mut inner = process.inner_exclusive_access();
+    let mut inner = process.inner();
     // 不大于最初的堆地址则失败。其中也包括了 brk 为 0  的情况
     Ok(inner.set_user_brk(brk) as isize)
+}
+
+/// 为当前进程设置信号动作，返回 0
+///
+/// 参数：
+/// - `signum` 指示信号编号，但不可以是 `SIGKILL` 或 `SIGSTOP`
+/// - `act` 如果非空，则将信号 `signal` 的动作设置为它
+/// - `old_act` 如果非空，则将信号 `signal` 原来的动作备份在其中
+pub fn sys_sigaction(
+    signum: usize,
+    act: *const SignalAction,
+    old_act: *mut SignalAction,
+) -> Result {
+    let signal = Signal::try_from_primitive(signum as u8).or(Err(code::EINVAL))?;
+    // `SIGKILL` 和 `SIGSTOP` 的行为不可修改
+    if matches!(signal, Signal::SIGKILL | Signal::SIGSTOP) {
+        return Err(code::EINVAL);
+    }
+    let process = current_process();
+    let mut inner = process.inner();
+    let mut pt = PageTable::from_token(inner.user_token());
+
+    if !old_act.is_null() {
+        let old_act = unsafe { pt.trans_ptr_mut(old_act).ok_or(code::EFAULT)? };
+        *old_act = inner.sig_handlers.action(signal);
+    }
+
+    if !act.is_null() {
+        let act = unsafe { pt.trans_ptr(act).ok_or(code::EFAULT)? };
+        inner.sig_handlers.set_action(signal, *act);
+    }
+
+    Ok(0)
+}
+
+/// 修改当前线程的信号掩码，返回 0
+///
+/// 参数：
+/// - `how` 只应取 0(`SIG_BLOCK`)、1(`SIG_UNBLOCK`)、2(`SIG_SETMASK`)，表示函数的处理方式。
+///     - `SIG_BLOCK` 向掩码 bitset 中添入新掩码
+///     - `SIG_UNBLOCK` 从掩码 bitset 中取消掩码
+///     - `SIG_SETMASK` 直接设置掩码 bitset
+/// - `set` 为空时，信号掩码不会被修改（无论 `how` 取何值）。其余时候则是新掩码参数，根据 `how` 进行设置
+/// - `old_set` 非空时，将旧掩码的值放入其中
+pub fn sys_sigprocmask(
+    how: usize,
+    set: *const SignalSet,
+    old_set: *mut SignalSet,
+    sigsetsize: usize,
+) -> Result {
+    // NOTE: 这里 `set` == `old_set` 的情况是否需要考虑一下
+    if sigsetsize != SIGSET_SIZE_BYTES {
+        return Err(code::EINVAL);
+    }
+    let thread = current_task().unwrap();
+    let mut inner = thread.inner();
+    let mut pt = PageTable::from_token(thread.user_token());
+
+    let sig_set = &mut inner.sig_receiver.mask;
+    if !old_set.is_null() {
+        unsafe {
+            *pt.trans_ptr_mut(old_set).ok_or(code::EINVAL)? = *sig_set;
+        }
+    }
+    if set.is_null() {
+        return Ok(0);
+    }
+    const SIG_BLOCK: usize = 0;
+    const SIG_UNBLOCK: usize = 1;
+    const SIG_SETMASK: usize = 2;
+    let new_set = unsafe { *pt.trans_ptr(set).ok_or(code::EINVAL)? };
+    match how {
+        SIG_BLOCK => {
+            sig_set.insert(new_set);
+        }
+        SIG_UNBLOCK => {
+            sig_set.remove(new_set);
+        }
+        SIG_SETMASK => {
+            *sig_set = new_set;
+        }
+        _ => return Err(code::EINVAL),
+    }
+
+    Ok(0)
+}
+
+/// 返回系统信息，目前设计中永不失败，返回 0
+pub fn sys_uname(utsname: *mut UtsName) -> Result {
+    unsafe {
+        *current_page_table()
+            .trans_ptr_mut(utsname)
+            .ok_or(code::EFAULT)? = UtsName::default();
+    }
+    Ok(0)
 }

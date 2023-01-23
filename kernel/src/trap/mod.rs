@@ -1,17 +1,3 @@
-//! Trap handling functionality
-//!
-//! For rCore, we have a single trap entry point, namely `__alltraps`. At
-//! initialization in [`init()`], we set the `stvec` CSR to point to it.
-//!
-//! All traps go through `__alltraps`, which is defined in `trap.S`. The
-//! assembly language code does just enough work restore the kernel space
-//! context, ensuring that Rust code safely runs, and transfers control to
-//! [`trap_handler()`].
-//!
-//! It then calls different functionality based on what exactly the exception
-//! was. For example, timer interrupts trigger task preemption, and syscalls go
-//! to [`syscall()`].
-
 mod context;
 
 use crate::config::TRAMPOLINE;
@@ -20,7 +6,7 @@ use crate::task::{
     current_process, current_trap_ctx, current_trap_ctx_user_va, current_user_token,
 };
 use crate::task::{exit_current_and_run_next, suspend_current_and_run_next};
-use crate::timer::{check_timer, set_next_trigger};
+use crate::utils::timer::{check_timer, set_next_trigger};
 use riscv::register::{
     mtvec::TrapMode,
     scause::{self, Exception, Interrupt, Trap},
@@ -81,6 +67,7 @@ pub fn trap_handler() -> ! {
         | Trap::Exception(Exception::InstructionPageFault)
         | Trap::Exception(Exception::LoadFault)
         | Trap::Exception(Exception::LoadPageFault) => {
+            log::debug!("ctx: {:#x?}", current_trap_ctx().x);
             log::error!(
                 "[kernel] {:?} in application, bad addr = {:#x}, bad inst pc = {:#x}, core dumped.",
                 scause.cause(),
@@ -91,11 +78,11 @@ pub fn trap_handler() -> ! {
             exit_current_and_run_next(-2);
         }
         Trap::Exception(Exception::IllegalInstruction) => {
+            log::debug!("trap_ctx: {:#x?}", current_trap_ctx().x);
             log::error!(
                 "[kernel] IllegalInstruction(pc={:#x}) in application, core dumped.",
-                stval
+                current_trap_ctx().sepc
             );
-            // illegal instruction exit code
             exit_current_and_run_next(-3);
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {

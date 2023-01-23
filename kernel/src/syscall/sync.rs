@@ -1,15 +1,17 @@
 use crate::{
-    error::Result,
     sync::{Condvar, Mutex, MutexBlocking, MutexSpin, Semaphore},
     task::{block_current_and_run_next, current_process, current_task},
-    timer::{add_timer, get_time_ms},
+    utils::{
+        error::Result,
+        timer::{add_timer, get_time_ms},
+    },
 };
 use alloc::sync::Arc;
 
 pub fn sys_sleep(ms: usize) -> Result {
     let expire_ms = get_time_ms() + ms;
-    let task = current_task().unwrap();
-    add_timer(expire_ms, task);
+    let thread = current_task().unwrap();
+    add_timer(expire_ms, thread);
     block_current_and_run_next();
     Ok(0)
 }
@@ -21,7 +23,7 @@ pub fn sys_mutex_create(blocking: bool) -> Result {
     } else {
         Some(Arc::new(MutexBlocking::new()))
     };
-    let mut process_inner = process.inner_exclusive_access();
+    let mut process_inner = process.inner();
     // NOTE: 有 create，但似乎没有销毁。那么是否意味着 mutex_list 里永远都是 Some
     if let Some(id) = process_inner
         .mutex_list
@@ -41,7 +43,7 @@ pub fn sys_mutex_create(blocking: bool) -> Result {
 
 pub fn sys_mutex_lock(mutex_id: usize) -> Result {
     let process = current_process();
-    let inner = process.inner_exclusive_access();
+    let inner = process.inner();
     let mutex = Arc::clone(inner.mutex_list[mutex_id].as_ref().unwrap());
     drop(inner);
     drop(process);
@@ -52,7 +54,7 @@ pub fn sys_mutex_lock(mutex_id: usize) -> Result {
 
 pub fn sys_mutex_unlock(mutex_id: usize) -> Result {
     let process = current_process();
-    let inner = process.inner_exclusive_access();
+    let inner = process.inner();
     let mutex = Arc::clone(inner.mutex_list[mutex_id].as_ref().unwrap());
     // NOTE: unlock 一般不导致阻塞吧？那么为什么要 drop 呢？
     drop(inner);
@@ -63,7 +65,7 @@ pub fn sys_mutex_unlock(mutex_id: usize) -> Result {
 
 pub fn sys_semaphore_create(res_count: usize) -> Result {
     let process = current_process();
-    let mut inner = process.inner_exclusive_access();
+    let mut inner = process.inner();
     if let Some(id) = inner
         .sem_list
         .iter()
@@ -83,7 +85,7 @@ pub fn sys_semaphore_create(res_count: usize) -> Result {
 
 pub fn sys_semaphore_up(sem_id: usize) -> Result {
     let process = current_process();
-    let inner = process.inner_exclusive_access();
+    let inner = process.inner();
     let sem = Arc::clone(inner.sem_list[sem_id].as_ref().unwrap());
     drop(inner);
     sem.up();
@@ -93,7 +95,7 @@ pub fn sys_semaphore_up(sem_id: usize) -> Result {
 // LAB5 HINT: Return -0xDEAD if deadlock is detected
 pub fn sys_semaphore_down(sem_id: usize) -> Result {
     let process = current_process();
-    let inner = process.inner_exclusive_access();
+    let inner = process.inner();
     let sem = Arc::clone(inner.sem_list[sem_id].as_ref().unwrap());
 
     drop(inner);
@@ -104,7 +106,7 @@ pub fn sys_semaphore_down(sem_id: usize) -> Result {
 
 pub fn sys_condvar_create(_arg: usize) -> Result {
     let process = current_process();
-    let mut process_inner = process.inner_exclusive_access();
+    let mut process_inner = process.inner();
     let id = if let Some(id) = process_inner
         .condvar_list
         .iter()
@@ -125,7 +127,7 @@ pub fn sys_condvar_create(_arg: usize) -> Result {
 
 pub fn sys_condvar_signal(condvar_id: usize) -> Result {
     let process = current_process();
-    let process_inner = process.inner_exclusive_access();
+    let process_inner = process.inner();
     let condvar = Arc::clone(process_inner.condvar_list[condvar_id].as_ref().unwrap());
     drop(process_inner);
     condvar.signal();
@@ -134,7 +136,7 @@ pub fn sys_condvar_signal(condvar_id: usize) -> Result {
 
 pub fn sys_condvar_wait(condvar_id: usize, mutex_id: usize) -> Result {
     let process = current_process();
-    let process_inner = process.inner_exclusive_access();
+    let process_inner = process.inner();
     let condvar = Arc::clone(process_inner.condvar_list[condvar_id].as_ref().unwrap());
     let mutex = Arc::clone(process_inner.mutex_list[mutex_id].as_ref().unwrap());
     drop(process_inner);

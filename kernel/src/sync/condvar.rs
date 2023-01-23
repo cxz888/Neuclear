@@ -1,6 +1,6 @@
 use crate::sync::{Mutex, UPSafeCell};
 use crate::task::current_task;
-use crate::task::{add_task, block_current_and_run_next, TaskControlBlock};
+use crate::task::{add_task, block_current_and_run_next, ThreadControlBlock};
 use alloc::{collections::VecDeque, sync::Arc};
 
 pub struct Condvar {
@@ -8,7 +8,7 @@ pub struct Condvar {
 }
 
 pub struct CondvarInner {
-    pub wait_queue: VecDeque<Arc<TaskControlBlock>>,
+    pub wait_queue: VecDeque<Arc<ThreadControlBlock>>,
 }
 
 impl Condvar {

@@ -6,9 +6,9 @@
 
 use super::__switch;
 use super::process::ProcessControlBlock;
-use super::{fetch_task, TaskStatus};
-use super::{TaskContext, TaskControlBlock};
-use crate::mm::PageTable;
+use super::{fetch_task, ThreadStatus};
+use super::{TaskContext, ThreadControlBlock};
+use crate::memory::PageTable;
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
@@ -17,7 +17,7 @@ use lazy_static::*;
 /// Processor management structure
 pub struct Processor {
     /// The task currently executing on the current processor
-    current: Option<Arc<TaskControlBlock>>,
+    current: Option<Arc<ThreadControlBlock>>,
     /// The basic control flow of each core, helping to select and switch process
     idle_task_ctx: TaskContext,
 }
@@ -32,10 +32,10 @@ impl Processor {
     fn get_idle_task_ctx_ptr(&mut self) -> *mut TaskContext {
         &mut self.idle_task_ctx as *mut _
     }
-    pub fn take_current(&mut self) -> Option<Arc<TaskControlBlock>> {
+    pub fn take_current(&mut self) -> Option<Arc<ThreadControlBlock>> {
         self.current.take()
     }
-    pub fn current(&self) -> Option<Arc<TaskControlBlock>> {
+    pub fn current(&self) -> Option<Arc<ThreadControlBlock>> {
         self.current.as_ref().map(Arc::clone)
     }
 }
@@ -56,9 +56,9 @@ pub fn run_tasks() {
             // println!("task get!");
             let idle_task_ctx_ptr = processor.get_idle_task_ctx_ptr();
             // access coming task TCB exclusively
-            let mut task_inner = task.inner_exclusive_access();
+            let mut task_inner = task.inner();
             let next_task_ctx_ptr = &task_inner.task_ctx as *const TaskContext;
-            task_inner.task_status = TaskStatus::Running;
+            task_inner.thread_status = ThreadStatus::Running;
             drop(task_inner);
             // release coming task TCB manually
             processor.current = Some(task);
@@ -74,12 +74,12 @@ pub fn run_tasks() {
 }
 
 /// Get current task through take, leaving a None in its place
-pub fn take_current_task() -> Option<Arc<TaskControlBlock>> {
+pub fn take_current_task() -> Option<Arc<ThreadControlBlock>> {
     PROCESSOR.exclusive_access().take_current()
 }
 
 /// Get a copy of the current task
-pub fn current_task() -> Option<Arc<TaskControlBlock>> {
+pub fn current_task() -> Option<Arc<ThreadControlBlock>> {
     PROCESSOR.exclusive_access().current()
 }
 
@@ -93,6 +93,7 @@ pub fn current_user_token() -> usize {
     task.user_token()
 }
 
+/// 注意，会借用当前线程
 pub fn current_page_table() -> PageTable {
     let task = current_task().unwrap();
     PageTable::from_token(task.user_token())
@@ -100,13 +101,13 @@ pub fn current_page_table() -> PageTable {
 
 /// Get the mutable reference to trap context of current task
 pub fn current_trap_ctx() -> &'static mut TrapContext {
-    current_task().unwrap().inner_exclusive_access().trap_ctx()
+    current_task().unwrap().inner().trap_ctx()
 }
 
 pub fn current_trap_ctx_user_va() -> usize {
     current_task()
         .unwrap()
-        .inner_exclusive_access()
+        .inner()
         .res
         .as_ref()
         .unwrap()

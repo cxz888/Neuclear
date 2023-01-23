@@ -13,9 +13,9 @@ pub struct FrameTracker {
 }
 
 impl FrameTracker {
+    // 分配一个新的物理帧，同时会将该物理帧清空
     pub fn new(mut ppn: PhysPageNum) -> Self {
-        // page cleaning
-        let bytes_array = ppn.as_page_bytes_mut();
+        let bytes_array = unsafe { ppn.as_page_bytes_mut() };
         bytes_array.fill(0);
         Self { ppn }
     }

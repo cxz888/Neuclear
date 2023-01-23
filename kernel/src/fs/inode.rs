@@ -1,5 +1,4 @@
 use crate::driver_impl::BLOCK_DEVICE;
-use crate::mm::UserBuffer;
 use crate::sync::UPSafeCell;
 
 use alloc::{sync::Arc, vec::Vec};

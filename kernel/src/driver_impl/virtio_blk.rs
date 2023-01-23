@@ -1,4 +1,4 @@
-use crate::mm::{
+use crate::memory::{
     frame_alloc, frame_dealloc, kernel_token, FrameTracker, PageTable, PhysAddr, PhysPageNum,
     VirtAddr,
 };
@@ -76,6 +76,6 @@ pub extern "C" fn virtio_phys_to_virt(paddr: PhysAddr) -> VirtAddr {
 #[no_mangle]
 pub extern "C" fn virtio_virt_to_phys(vaddr: VirtAddr) -> PhysAddr {
     PageTable::from_token(kernel_token())
-        .translate_va_to_pa(vaddr)
+        .trans_va_to_pa(vaddr)
         .unwrap()
 }

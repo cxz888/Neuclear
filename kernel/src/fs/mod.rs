@@ -2,7 +2,7 @@ mod inode;
 mod pipe;
 mod stdio;
 
-use crate::mm::UserBuffer;
+use crate::memory::UserBuffer;
 
 use bitflags::bitflags;
 

@@ -1,6 +1,6 @@
 use bitflags::bitflags;
 
-use crate::mm::MapPermission;
+use crate::memory::MapPermission;
 
 bitflags! {
     pub struct MmapProt: u32 {
@@ -26,11 +26,5 @@ bitflags! {
         const MAP_ANONYMOUS = 1 << 5;
         /// 不为该映射保留 swap 空间。当实际物理内存不足时，可能造成内存溢出。
         const MAP_NORESERVE = 1 << 14;
-    }
-}
-
-impl Into<MapPermission> for MmapProt {
-    fn into(self) -> MapPermission {
-        MapPermission::from_bits_truncate((self.bits() << 1) as u8) | MapPermission::U
     }
 }

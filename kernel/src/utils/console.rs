@@ -1,7 +1,8 @@
 //! SBI console driver, for text output
 
-use crate::sbi::console_putchar;
 use core::fmt::{self, Write};
+
+use super::sbi::console_putchar;
 
 struct Stdout;
 
@@ -22,7 +23,7 @@ pub fn print(args: fmt::Arguments) {
 /// print string macro
 macro_rules! print {
     ($fmt: literal $(, $($arg: tt)+)?) => {
-        $crate::console::print(format_args!($fmt $(, $($arg)+)?));
+        $crate::utils::console::print(format_args!($fmt $(, $($arg)+)?));
     }
 }
 
@@ -30,7 +31,7 @@ macro_rules! print {
 /// println string macro
 macro_rules! println {
     ($fmt: literal $(, $($arg: tt)+)?) => {
-        $crate::console::print(format_args!(concat!($fmt, "\n") $(, $($arg)+)?));
+        $crate::utils::console::print(format_args!(concat!($fmt, "\n") $(, $($arg)+)?));
     }
 }
 
@@ -66,7 +67,7 @@ pub fn print_colorized(
 #[macro_export]
 macro_rules! print_colorized {
     ($fmt: literal, $foreground_color: expr, $background_color: expr $(, $($arg: tt)+)?) => {
-        $crate::console::print_colorized(format_args!($fmt $(, $($arg)+)?), $foreground_color as u8, $background_color as u8);
+        $crate::utils::console::print_colorized(format_args!($fmt $(, $($arg)+)?), $foreground_color as u8, $background_color as u8);
     };
 }
 
@@ -74,7 +75,7 @@ macro_rules! print_colorized {
 #[macro_export]
 macro_rules! println_colorized {
     ($fmt: literal, $foreground_color: expr, $background_color: expr $(, $($arg: tt)+)?) => {
-        $crate::console::print_colorized(format_args!(concat!($fmt, "\n") $(, $($arg)+)?), $foreground_color as u8, $background_color as u8);
+        $crate::utils::console::print_colorized(format_args!(concat!($fmt, "\n") $(, $($arg)+)?), $foreground_color as u8, $background_color as u8);
     }
 }
 

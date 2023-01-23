@@ -5,8 +5,8 @@ mod sync;
 mod thread;
 
 use crate::{
-    error::code,
-    task::{current_process, current_trap_ctx},
+    task::{current_process, current_trap_ctx, exit_current_and_run_next},
+    utils::{error::code, structs::TimeVal},
 };
 use fs::*;
 use process::*;
@@ -29,6 +29,7 @@ macro_rules! declare_syscall_id {
 
 #[rustfmt::skip]
 declare_syscall_id!(
+    GETCWD, 17,
     DUP, 24, 
     IOCTL, 29,
     UNLINKAT, 35,
@@ -44,9 +45,14 @@ declare_syscall_id!(
     SET_TID_ADDRESS, 96,
     SLEEP, 101,
     YIELD, 124,
+    KILL, 129,
+    SIGACTION, 134,
+    SIGPROCMASK, 135,
     SET_PRIORITY, 140,
+    UNAME, 160,
     GET_TIME, 169,
     GETPID, 172,
+    GETPPID, 173,
     GETUID, 174,
     GETEUID, 175,
     GETGID, 176,
@@ -54,7 +60,7 @@ declare_syscall_id!(
     GETTID, 178,
     BRK, 214,
     MUNMAP, 215,
-    FORK, 220,
+    CLONE, 220,
     EXEC, 221,
     MMAP, 222,
     WAITPID, 260,
@@ -76,6 +82,7 @@ declare_syscall_id!(
 /// handle syscall exception with `id` and other arguments
 pub fn syscall(id: usize, args: [usize; 6]) -> isize {
     let ret = match id {
+        GETCWD => sys_getcwd(args[0] as _, args[1]),
         DUP => sys_dup(args[0]),
         IOCTL => sys_ioctl(args[0], args[1], args[2] as _),
         // UNLINKAT => sys_unlinkat(args[1] as *const u8),
@@ -83,32 +90,36 @@ pub fn syscall(id: usize, args: [usize; 6]) -> isize {
         // OPEN => sys_open(args[1] as *const u8, args[2] as u32),
         // CLOSE => sys_close(args[0]),
         // PIPE => sys_pipe(args[0] as *mut usize),
-        READ => sys_read(args[0], args[1] as *const u8, args[2]),
-        WRITE => sys_write(args[0], args[1] as *const u8, args[2]),
+        READ => sys_read(args[0], args[1] as _, args[2]),
+        WRITE => sys_write(args[0], args[1] as _, args[2]),
         // FSTAT => sys_fstat(args[0], args[1] as *mut Stat),
-        EXIT | EXIT_GROUP => sys_exit(args[0] as i32),
+        EXIT | EXIT_GROUP => sys_exit(args[0] as _),
         SET_TID_ADDRESS => sys_set_tid_address(args[0] as _),
         SLEEP => sys_sleep(args[0]),
         YIELD => sys_yield(),
+        SIGACTION => sys_sigaction(args[0], args[1] as _, args[2] as _),
+        SIGPROCMASK => sys_sigprocmask(args[0], args[1] as _, args[2] as _, args[3]),
         // SET_PRIORITY => sys_set_priority(args[0] as isize),
+        UNAME => sys_uname(args[0] as _),
         GETPID => sys_getpid(),
+        GETPPID => sys_getppid(),
         GETUID | GETEUID | GETGID | GETEGID => Ok(0), // 目前不实现用户和用户组相关的部分
         GETTID => sys_gettid(),
         BRK => sys_brk(args[0]),
-        FORK => sys_fork(),
-        EXEC => sys_exec(args[0] as *const u8, args[1] as *const usize),
-        WAITPID => sys_waitpid(args[0] as isize, args[1] as *mut i32),
-        GET_TIME => sys_get_time(args[0] as *mut TimeVal, args[1]),
+        CLONE => sys_clone(args[0], args[1], args[2], args[3], args[4]),
+        EXEC => sys_exec(args[0] as _, args[1] as _),
+        WAITPID => sys_waitpid(args[0] as _, args[1] as _),
+        GET_TIME => sys_get_time(args[0] as _, args[1]),
         // MUNMAP => sys_munmap(args[0], args[1]),
         MMAP => sys_mmap(
             args[0],
             args[1],
-            args[2] as u32,
-            args[3] as u32,
-            args[4] as i32,
+            args[2] as _,
+            args[3] as _,
+            args[4] as _,
             args[5],
         ),
-        SPAWN => sys_spawn(args[0] as *const u8),
+        SPAWN => sys_spawn(args[0] as _),
         // TASK_INFO => sys_task_info(args[0] as *mut TaskInfo),
         THREAD_CREATE => sys_thread_create(args[0], args[1]),
         WAITTID => sys_waittid(args[0]),
@@ -126,7 +137,8 @@ pub fn syscall(id: usize, args: [usize; 6]) -> isize {
                 "[kernel] Unsupport inst pc = {:#x}",
                 current_trap_ctx().sepc,
             );
-            panic!("[kernel] Unsupported id: {}", id);
+            log::error!("[kernel] Unsupported id: {}", id);
+            exit_current_and_run_next(-10);
         }
     };
     let curr_pid = current_process().pid.0;
@@ -147,7 +159,7 @@ pub fn syscall(id: usize, args: [usize; 6]) -> isize {
             ret
         }
         Err(errno) => {
-            if !(id == 260 && errno == code::EAGAIN) {
+            if !(id == WAITPID && errno == code::EAGAIN) {
                 log::info!(
                     "[kernel] pid: {curr_pid}, syscall: {}, return {errno:?}",
                     name(id)

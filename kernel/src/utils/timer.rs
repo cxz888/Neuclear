@@ -1,9 +1,9 @@
 //! RISC-V timer-related functionality
 
 use crate::config::CLOCK_FREQ;
-use crate::sbi::set_timer;
 use crate::sync::UPSafeCell;
-use crate::task::{add_task, TaskControlBlock};
+use crate::task::{add_task, ThreadControlBlock};
+use crate::utils::sbi::set_timer;
 use alloc::collections::BinaryHeap;
 use alloc::sync::Arc;
 use core::cmp::Ordering;
@@ -36,7 +36,7 @@ pub fn set_next_trigger() {
 
 pub struct TimerCondVar {
     pub expire_ms: usize,
-    pub task: Arc<TaskControlBlock>,
+    pub thread: Arc<ThreadControlBlock>,
 }
 
 impl PartialEq for TimerCondVar {
@@ -64,9 +64,9 @@ lazy_static! {
         unsafe { UPSafeCell::new(BinaryHeap::<TimerCondVar>::new()) };
 }
 
-pub fn add_timer(expire_ms: usize, task: Arc<TaskControlBlock>) {
+pub fn add_timer(expire_ms: usize, thread: Arc<ThreadControlBlock>) {
     let mut timers = TIMERS.exclusive_access();
-    timers.push(TimerCondVar { expire_ms, task });
+    timers.push(TimerCondVar { expire_ms, thread });
 }
 
 pub fn check_timer() {
@@ -74,7 +74,7 @@ pub fn check_timer() {
     let mut timers = TIMERS.exclusive_access();
     while let Some(timer) = timers.peek() {
         if timer.expire_ms <= current_ms {
-            add_task(Arc::clone(&timer.task));
+            add_task(Arc::clone(&timer.thread));
             timers.pop();
         } else {
             break;

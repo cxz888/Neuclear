@@ -10,12 +10,12 @@ use goblin::elf::{
 
 use crate::{
     config::PAGE_SIZE,
-    error::{code, Result},
     fs::{open_file, OpenFlags},
     loader::stack::{InfoBlock, StackInit},
-    mm::{MapArea, MapPermission, MapType, MemorySet, PageTable, VirtAddr, KERNEL_SPACE},
+    memory::{MapArea, MapPermission, MapType, MemorySet, PageTable, VirtAddr, KERNEL_SPACE},
     task::ProcessControlBlockInner,
     trap::{trap_handler, TrapContext},
+    utils::error::{code, Result},
 };
 
 // PH 相关和 Entry 应该是用于动态链接的，交由所谓 interpreter 解析
@@ -46,14 +46,14 @@ impl Loader {
         let argc = args.len();
         log::info!("path: {path}, args: {args:?}");
 
-        // 地址空间要清空，当然 trampoline 也不能忘了
-        pcb.memory_set = MemorySet::new_bare();
-        pcb.memory_set.map_trampoline();
-
         // 读取和解析 ELF 内容
         let app_inode = open_file(path, OpenFlags::RDONLY).ok_or(code::ENOENT)?;
         let elf_data = app_inode.read_all();
         let elf = Elf::parse(&elf_data).expect("should be valid elf");
+
+        // 地址空间要清空，当然 trampoline 也不能忘了
+        pcb.memory_set = MemorySet::new_bare();
+        pcb.memory_set.map_trampoline();
 
         // 映射 ELF 中所有段
 
@@ -71,12 +71,12 @@ impl Loader {
         pcb.heap_start = VirtAddr(elf_end).vpn();
 
         // 为线程分配资源
-        let task = pcb.task(0);
-        let mut task_inner = task.inner_exclusive_access();
-        let user_res = task_inner.res.as_mut().unwrap();
+        let thread = pcb.main_thread();
+        let mut thread_inner = thread.inner();
+        let user_res = thread_inner.res.as_mut().unwrap();
         user_res.alloc_user_res(&mut pcb.memory_set);
         let sp = user_res.user_stack_high_addr();
-        task_inner.trap_ctx_ppn = user_res.trap_ctx_ppn(&mut pcb.memory_set).unwrap();
+        thread_inner.trap_ctx_ppn = user_res.trap_ctx_ppn(&mut pcb.memory_set).unwrap();
 
         // 在用户栈上推入参数、环境变量、辅助向量等
         let new_token = pcb.memory_set.token();
@@ -94,12 +94,12 @@ impl Loader {
             elf.entry as usize,
             stack_init.sp,
             KERNEL_SPACE.exclusive_access().token(),
-            task.kernel_stack.top(),
+            thread.kernel_stack.top(),
             trap_handler as usize,
         );
         trap_ctx.x[10] = argc;
         trap_ctx.x[11] = argv_base;
-        *task_inner.trap_ctx() = trap_ctx;
+        *thread_inner.trap_ctx() = trap_ctx;
         Ok(())
     }
 }
@@ -140,8 +140,13 @@ fn load_sections(elf: &Elf, elf_data: &[u8], memory_set: &mut MemorySet) -> (usi
                 },
                 map_perm,
             );
+            // FIXME: 非常见鬼。在加载 elf 时，莫名其妙导致一部分数据没有加载进去（表现为全 0）。
+            // 结果是重复运行任务时，有未加载的指令。怀疑可能是缓存的问题，但暂时不知道如何解决。
+            // 去掉下面这个 log 可以复现
+            log::debug!("file range: {:#x?}", ph.file_range());
             elf_end = map_area.vpn_range.end.page_start().0.max(elf_end);
             memory_set.push(map_area, start_offset, Some(&elf_data[ph.file_range()]));
+
             log::debug!("map_perm: {:?}", map_perm);
         }
     }

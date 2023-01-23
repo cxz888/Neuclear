@@ -40,4 +40,5 @@ pub mod code {
     declare_err!(EINVAL, -22, "Invalid argument.");
     declare_err!(EMFILE, -24, "Too many open files.");
     declare_err!(ESPIPE, -29, "Illegal seek.");
+    declare_err!(ERANGE, -34, "Exceed range.");
 }

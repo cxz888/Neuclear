@@ -1,46 +1,26 @@
-//! The main module and entrypoint
-//!
-//! Various facilities of the kernels are implemented as submodules. The most
-//! important ones are:
-//!
-//! - [`trap`]: Handles all cases of switching from userspace to the kernel
-//! - [`task`]: Task management
-//! - [`syscall`]: System call handling and implementation
-//!
-//! The operating system also starts in this module. Kernel code starts
-//! executing from `entry.asm`, after which [`rust_main()`] is called to
-//! initialize various pieces of functionality. (See its source code for
-//! details.)
-//!
-//! We then call [`task::run_first_task()`] and for the first time go to
-//! userspace.
-
 #![no_std]
 #![no_main]
 #![feature(panic_info_message)]
 #![feature(alloc_error_handler)]
 #![feature(step_trait)]
 #![feature(let_else)]
+#![feature(bench_black_box)]
+#![feature(assert_matches)]
 
 extern crate alloc;
 
 #[macro_use]
-mod console;
+mod utils;
 mod config;
 mod driver_impl;
 mod fs;
-mod lang_items;
 mod loader;
-mod logging;
-mod mm;
-mod sbi;
+mod memory;
+mod signal;
 mod sync;
 mod syscall;
 mod task;
-mod timer;
 mod trap;
-
-pub mod error;
 
 core::arch::global_asm!(include_str!("entry.asm"));
 
@@ -60,12 +40,12 @@ fn clear_bss() {
 /// the rust entry-point of os
 pub fn rust_main() -> ! {
     clear_bss();
-    logging::init();
+    utils::logging::init();
     println!("[kernel] Hello, world!");
-    mm::init();
+    memory::init();
     trap::init();
     trap::enable_timer_interrupt();
-    timer::set_next_trigger();
+    utils::timer::set_next_trigger();
     // Uncomment following lines and see what happens!
     // task::kernel_stackless_coroutine_test();
     // task::kernel_stackful_coroutine_test();

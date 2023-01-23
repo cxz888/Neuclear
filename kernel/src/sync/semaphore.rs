@@ -1,6 +1,6 @@
 use crate::sync::UPSafeCell;
 use crate::task::current_task;
-use crate::task::{add_task, block_current_and_run_next, TaskControlBlock};
+use crate::task::{add_task, block_current_and_run_next, ThreadControlBlock};
 use alloc::{collections::VecDeque, sync::Arc};
 
 pub struct Semaphore {
@@ -9,7 +9,7 @@ pub struct Semaphore {
 
 pub struct SemaphoreInner {
     pub count: isize,
-    pub wait_queue: VecDeque<Arc<TaskControlBlock>>,
+    pub wait_queue: VecDeque<Arc<ThreadControlBlock>>,
 }
 
 impl Semaphore {

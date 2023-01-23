@@ -2,7 +2,7 @@ use super::ProcessControlBlock;
 use crate::config::{
     KERNEL_STACK_SIZE, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK, USER_STACK_SIZE,
 };
-use crate::mm::{MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
+use crate::memory::{MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use alloc::{
     sync::{Arc, Weak},
@@ -109,23 +109,23 @@ impl KernelStack {
     }
 }
 
-pub struct TaskUserRes {
+pub struct ThreadUserRes {
     pub tid: usize,
     pub process: Weak<ProcessControlBlock>,
 }
 
-impl TaskUserRes {
+impl ThreadUserRes {
     /// 用户资源包括用户栈和 trap_ctx。
     pub fn new(process: &Arc<ProcessControlBlock>, alloc_user_res: bool) -> Self {
-        let tid = process.inner_exclusive_access().alloc_tid();
-        let task_user_res = Self {
+        let tid = process.inner().alloc_tid();
+        let thread_user_res = Self {
             tid,
             process: Arc::downgrade(process),
         };
         if alloc_user_res {
-            task_user_res.alloc_user_res(&mut process.inner_exclusive_access().memory_set);
+            thread_user_res.alloc_user_res(&mut process.inner().memory_set);
         }
-        task_user_res
+        thread_user_res
     }
 
     /// 分配用户空间所需的资源，包括用户栈和 trap_ctx
@@ -153,7 +153,7 @@ impl TaskUserRes {
     fn dealloc_user_res(&self) {
         // dealloc tid
         let process = self.process.upgrade().unwrap();
-        let mut inner = process.inner_exclusive_access();
+        let mut inner = process.inner();
         // dealloc ustack manually
         let user_stack_low_addr = VirtAddr(self.user_stack_low_addr());
         inner
@@ -168,7 +168,7 @@ impl TaskUserRes {
 
     pub fn dealloc_tid(&self) {
         let process = self.process.upgrade().unwrap();
-        let mut process_inner = process.inner_exclusive_access();
+        let mut process_inner = process.inner();
         process_inner.dealloc_tid(self.tid);
     }
 
@@ -189,7 +189,7 @@ impl TaskUserRes {
     }
 }
 
-impl Drop for TaskUserRes {
+impl Drop for ThreadUserRes {
     fn drop(&mut self) {
         self.dealloc_tid();
         self.dealloc_user_res();
