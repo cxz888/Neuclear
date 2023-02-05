@@ -10,7 +10,7 @@ use goblin::elf::{
 
 use crate::{
     config::PAGE_SIZE,
-    fs::{open_file, OpenFlags},
+    fs::{open_file, open_osfile, OpenFlags},
     loader::stack::{InfoBlock, StackInit},
     memory::{MapArea, MapPermission, MapType, MemorySet, PageTable, VirtAddr, KERNEL_SPACE},
     task::ProcessControlBlockInner,
@@ -42,21 +42,30 @@ impl Loader {
     ///
     /// ELF 标准参考 <https://www.sco.com/developers/gabi/latest/ch5.pheader.html>
     /// 和 <https://github.com/riscv-non-isa/riscv-elf-psabi-doc/blob/master/riscv-elf.adoc>
-    pub fn load(pcb: &mut ProcessControlBlockInner, path: &str, args: Vec<String>) -> Result<()> {
+    pub fn load(pcb: &mut ProcessControlBlockInner, path: String, args: Vec<String>) -> Result<()> {
         let argc = args.len();
         log::info!("path: {path}, args: {args:?}");
 
         // 读取和解析 ELF 内容
-        let app_inode = open_file(path, OpenFlags::RDONLY).ok_or(code::ENOENT)?;
+        let app_inode = open_osfile(path, OpenFlags::O_RDONLY)?;
         let elf_data = app_inode.read_all();
         let elf = Elf::parse(&elf_data).expect("should be valid elf");
 
         // 地址空间要清空，当然 trampoline 也不能忘了
         pcb.memory_set = MemorySet::new_bare();
         pcb.memory_set.map_trampoline();
+        // 清空信号模块
+        pcb.sig_handlers.clear();
+        pcb.main_thread().inner().sig_receiver.clear();
+
+        // 清理那些设置了 CLOEXEC 标志的文件
+        for fd in &mut pcb.fd_table {
+            if let Some(fd_inner) = fd && fd_inner.status().contains(OpenFlags::O_CLOEXEC) {
+                fd.take();
+            }
+        }
 
         // 映射 ELF 中所有段
-
         assert!(elf.is_64);
         log::debug!("e_flags: {:#b}", elf.header.e_flags);
         assert_eq!(elf.header.e_type, ET_EXEC);

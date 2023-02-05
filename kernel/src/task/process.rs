@@ -8,7 +8,7 @@ use crate::{
     utils::error::Result,
 };
 use alloc::{
-    string::String,
+    string::{String, ToString},
     sync::{Arc, Weak},
     vec,
     vec::Vec,
@@ -21,6 +21,7 @@ pub struct ProcessControlBlock {
 }
 
 impl ProcessControlBlock {
+    #[track_caller]
     pub fn inner(&self) -> RefMut<ProcessControlBlockInner> {
         self.inner.exclusive_access()
     }
@@ -91,7 +92,7 @@ impl ProcessControlBlock {
 
     /// Load a new elf to replace the original application address space and start execution
     /// Only support processes with a single thread.
-    pub fn exec(&self, path: &str, args: Vec<String>) -> Result<()> {
+    pub fn exec(&self, path: String, args: Vec<String>) -> Result<()> {
         let mut inner = self.inner();
         assert_eq!(inner.thread_count(), 1);
         // memory_set with elf program headers/trampoline/trap context/user stack
@@ -125,9 +126,10 @@ pub struct ProcessControlBlockInner {
     pub exit_code: i32,
     pub heap_start: VirtPageNum,
     pub brk: usize,
-    pub fd_table: Vec<Option<Arc<dyn File + Send + Sync>>>,
-    pub thread_res_allocator: RecycleAllocator,
+    pub fd_table: Vec<Option<Arc<dyn File>>>,
     pub threads: Vec<Option<Arc<ThreadControlBlock>>>,
+    pub thread_res_allocator: RecycleAllocator,
+    pub cwd: String,
 
     pub sig_handlers: SignalHandlers,
 
@@ -142,7 +144,15 @@ impl ProcessControlBlockInner {
     }
 
     pub fn alloc_fd(&mut self) -> usize {
-        if let Some(fd) = (0..self.fd_table.len()).find(|fd| self.fd_table[*fd].is_none()) {
+        self.alloc_fd_from(0)
+    }
+    /// 分配出来的 fd 必然不小于 `min`
+    pub fn alloc_fd_from(&mut self, min: usize) -> usize {
+        if min > self.fd_table.len() {
+            self.fd_table
+                .extend(core::iter::repeat(None).take(min - self.fd_table.len()));
+        }
+        if let Some(fd) = (min..self.fd_table.len()).find(|fd| self.fd_table[*fd].is_none()) {
             fd
         } else {
             self.fd_table.push(None);
@@ -203,6 +213,7 @@ impl Default for ProcessControlBlockInner {
             ],
             threads: Vec::new(),
             thread_res_allocator: RecycleAllocator::new(),
+            cwd: "/".to_string(),
             sig_handlers: SignalHandlers::new(),
             mutex_list: Vec::new(),
             sem_list: Vec::new(),

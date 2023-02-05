@@ -79,10 +79,12 @@ impl ThreadControlBlock {
         }
     }
 
+    #[track_caller]
     pub fn inner(&self) -> RefMut<'_, ThreadControlBlockInner> {
         self.inner.exclusive_access()
     }
 
+    #[track_caller]
     pub fn user_token(&self) -> usize {
         let process = self.process.upgrade().unwrap();
         let inner = process.inner();

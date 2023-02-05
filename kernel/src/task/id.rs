@@ -178,7 +178,7 @@ impl ThreadUserRes {
     }
 
     pub fn trap_ctx_low_addr(&self) -> usize {
-        // 一个用户栈，一个Guard Page，一个 Trap Context
+        // 一个用户栈，一个 Guard Page，一个 Trap Context
         TRAP_CONTEXT - self.tid * (USER_STACK_SIZE + PAGE_SIZE * 2)
     }
     pub fn user_stack_low_addr(&self) -> usize {

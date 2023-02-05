@@ -194,7 +194,7 @@ impl MemorySet {
             // 尝试在高地址空间找到一个合适的段来映射
             let mut start = VirtPageNum((SECOND_START) >> PAGE_SIZE_BITS);
             let len = vpn_range.end.0 - vpn_range.start.0;
-            for (_, area) in &self.areas {
+            for area in self.areas.values() {
                 // 高地址空间，但同时要控制住不溢出
                 if area.vpn_range.start > start && start < VirtPageNum(TRAMPOLINE >> PAGE_SIZE_BITS)
                 {

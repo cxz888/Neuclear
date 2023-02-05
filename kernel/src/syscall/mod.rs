@@ -30,11 +30,12 @@ macro_rules! declare_syscall_id {
 #[rustfmt::skip]
 declare_syscall_id!(
     GETCWD, 17,
-    DUP, 24, 
+    DUP, 24,
+    FCNTL64, 25,
     IOCTL, 29,
     UNLINKAT, 35,
     LINKAT, 37,
-    OPEN, 56,
+    OPENAT, 56,
     CLOSE, 57,
     PIPE, 59,
     READ, 63,
@@ -84,11 +85,12 @@ pub fn syscall(id: usize, args: [usize; 6]) -> isize {
     let ret = match id {
         GETCWD => sys_getcwd(args[0] as _, args[1]),
         DUP => sys_dup(args[0]),
+        FCNTL64 => sys_fcntl64(args[0], args[1], args[2]),
         IOCTL => sys_ioctl(args[0], args[1], args[2] as _),
         // UNLINKAT => sys_unlinkat(args[1] as *const u8),
         // LINKAT => sys_linkat(args[1] as *const u8, args[3] as *const u8),
-        // OPEN => sys_open(args[1] as *const u8, args[2] as u32),
-        // CLOSE => sys_close(args[0]),
+        OPENAT => sys_openat(args[0] as _, args[1] as _, args[2] as _, args[3] as _),
+        CLOSE => sys_close(args[0]),
         // PIPE => sys_pipe(args[0] as *mut usize),
         READ => sys_read(args[0], args[1] as _, args[2]),
         WRITE => sys_write(args[0], args[1] as _, args[2]),
@@ -145,9 +147,9 @@ pub fn syscall(id: usize, args: [usize; 6]) -> isize {
     match ret {
         Ok(ret) => {
             // 读入标准输入、写入标准输出、写入标准错误、INITPROC 和 shell 都不关心
-            if !(id == READ && args[0] == 0)
-                && !(id == WRITE && args[0] == 1)
-                && !(id == WRITE && args[0] == 2)
+            if !(id == READ && args[0] == 0
+                || id == WRITE && args[0] == 1
+                || id == WRITE && args[0] == 2)
                 && curr_pid != 0
                 && curr_pid != 1
             {

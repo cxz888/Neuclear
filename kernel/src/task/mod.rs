@@ -30,7 +30,7 @@ pub use processor::{
 pub use thread::{ThreadControlBlock, ThreadStatus};
 
 use crate::loader::Loader;
-use alloc::{sync::Arc, vec::Vec};
+use alloc::{string::ToString, sync::Arc, vec::Vec};
 use core::mem;
 use lazy_static::*;
 use manager::fetch_task;
@@ -137,7 +137,7 @@ lazy_static! {
     /// but we have user_shell, so we don't need to change it.
     pub static ref INITPROC: Arc<ProcessControlBlock> = {
         let pcb = ProcessControlBlock::new();
-        Loader::load(&mut pcb.inner(), "initproc", Vec::new()).expect("INITPROC Failed.");
+        Loader::load(&mut pcb.inner(), "initproc".to_string(), Vec::new()).expect("INITPROC Failed.");
         pcb
     };
 }

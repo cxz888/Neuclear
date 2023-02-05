@@ -80,6 +80,7 @@ bitflags! {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, TryFromPrimitive)]
 #[repr(u8)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum Signal {
     ERR = 0,
     SIGHUP = 1,

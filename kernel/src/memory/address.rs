@@ -10,18 +10,15 @@ use super::page_table::PageTableEntry;
 pub struct PhysAddr(pub usize);
 
 impl PhysAddr {
-    // pub const fn page_offset(&self) -> usize {
-    //     self.0 & (PAGE_SIZE - 1)
-    // }
     /// 向下取整页号
-    pub fn floor(&self) -> PhysPageNum {
+    pub const fn floor(&self) -> PhysPageNum {
         PhysPageNum(self.0 / PAGE_SIZE)
     }
     /// 向上取整页号
-    pub fn ceil(&self) -> PhysPageNum {
+    pub const fn ceil(&self) -> PhysPageNum {
         PhysPageNum((self.0 + PAGE_SIZE - 1) / PAGE_SIZE)
     }
-    pub fn ppn(&self) -> PhysPageNum {
+    pub const fn ppn(&self) -> PhysPageNum {
         self.floor()
     }
     /// 需要保证该地址转化为 T 后内容合法且不会越过页边界
@@ -53,11 +50,11 @@ impl PhysPageNum {
     pub unsafe fn as_page_ptes_mut(&mut self) -> &'static mut [PageTableEntry; PTE_PER_PAGE] {
         self.page_start().as_mut()
     }
-    /// 任何页都可以转化为字节数组。但可能造成 alias，所以不太清除该不该标为 `unsafe`
-    pub fn as_page_bytes(&self) -> &'static [u8; PAGE_SIZE] {
-        unsafe { self.page_start().as_ref() }
+    /// 任何页都可以转化为字节数组。但可能造成 alias，所以先标为 `unsafe`
+    pub unsafe fn as_page_bytes(&self) -> &'static [u8; PAGE_SIZE] {
+        self.page_start().as_ref()
     }
-    /// 既然是 `mut` 就标为 `unsafe` 吧，需要保证 non-alias
+    /// 任何页都可以转化为字节数组。但可能造成 alias，所以先标为 `unsafe`
     pub unsafe fn as_page_bytes_mut(&mut self) -> &'static mut [u8; PAGE_SIZE] {
         self.page_start().as_mut()
     }
@@ -67,9 +64,6 @@ impl PhysPageNum {
     pub unsafe fn copy_from(&mut self, offset: usize, src: &[u8]) {
         let pa = self.page_start();
         let dst = core::slice::from_raw_parts_mut(pa.add(offset).0 as *mut u8, src.len());
-        // for (dst_byte, src_byte) in dst.iter_mut().zip(src) {
-        //     *dst_byte = *src_byte;
-        // }
         dst.copy_from_slice(src);
     }
 }

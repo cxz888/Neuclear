@@ -1,7 +1,5 @@
 use bitflags::bitflags;
 
-use crate::memory::MapPermission;
-
 bitflags! {
     pub struct MmapProt: u32 {
         const PROT_NONE  = 0;

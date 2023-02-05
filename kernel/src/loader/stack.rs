@@ -33,7 +33,7 @@ impl StackInit {
     }
 
     pub fn push_ptrs(&mut self, ptrs: &[usize]) {
-        for &ptr in ptrs.into_iter().rev() {
+        for &ptr in ptrs.iter().rev() {
             self.push_usize(ptr)
         }
     }

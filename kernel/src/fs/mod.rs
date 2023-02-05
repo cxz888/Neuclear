@@ -6,12 +6,26 @@ use crate::memory::UserBuffer;
 
 use bitflags::bitflags;
 
+pub use inode::{list_apps, open_file, open_osfile, OSFile, OpenFlags};
+pub use pipe::{make_pipe, Pipe};
+pub use stdio::{Stdin, Stdout};
+
 /// The common abstraction of all IO resources
 pub trait File: Send + Sync {
     fn readable(&self) -> bool;
     fn writable(&self) -> bool;
     fn read(&self, buf: UserBuffer) -> usize;
     fn write(&self, buf: UserBuffer) -> usize;
+    fn set_close_on_exec(&self, _bit: bool) {}
+    fn status(&self) -> OpenFlags {
+        OpenFlags::empty()
+    }
+    fn is_dir(&self) -> bool {
+        false
+    }
+    fn path(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// The stat of a inode
@@ -41,7 +55,3 @@ bitflags! {
         const FILE = 0o100000;
     }
 }
-
-pub use inode::{list_apps, open_file, OSInode, OpenFlags};
-pub use pipe::{make_pipe, Pipe};
-pub use stdio::{Stdin, Stdout};

@@ -14,6 +14,9 @@ impl SignalHandlers {
             actions: [DEFAULT_ACTION; SIGSET_SIZE],
         }
     }
+    pub fn clear(&mut self) {
+        self.actions.fill(SignalAction::new());
+    }
     pub fn action(&self, signal: Signal) -> SignalAction {
         // signal < SIGSET_SIZE 必然成立，所以不会 panic
         self.actions[signal as usize]

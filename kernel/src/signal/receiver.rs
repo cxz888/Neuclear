@@ -13,4 +13,8 @@ impl SignalReceiver {
             received: SignalSet::empty(),
         }
     }
+    pub fn clear(&mut self) {
+        self.mask = SignalSet::empty();
+        self.received = SignalSet::empty();
+    }
 }

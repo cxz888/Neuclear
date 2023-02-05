@@ -88,22 +88,26 @@ pub fn current_process() -> Arc<ProcessControlBlock> {
 }
 
 /// Get token of the address space of current task
+#[track_caller]
 pub fn current_user_token() -> usize {
     let task = current_task().unwrap();
     task.user_token()
 }
 
 /// 注意，会借用当前线程
+#[track_caller]
 pub fn current_page_table() -> PageTable {
     let task = current_task().unwrap();
     PageTable::from_token(task.user_token())
 }
 
 /// Get the mutable reference to trap context of current task
+#[track_caller]
 pub fn current_trap_ctx() -> &'static mut TrapContext {
     current_task().unwrap().inner().trap_ctx()
 }
 
+#[track_caller]
 pub fn current_trap_ctx_user_va() -> usize {
     current_task()
         .unwrap()

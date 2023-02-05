@@ -95,6 +95,9 @@ impl Entry for Fat32Entry {
         // assert_eq!(ret.len(), size);
         Ok(ret)
     }
+    /// 在目录下寻找一个条目。
+    ///
+    /// 若当前节点不是目录，或者寻找过程中发生底层错误，则返回错误
     fn find(&self, name: &str) -> Result<Option<Self>, VfsError> {
         let dir = match self {
             Fat32Entry::Dir(dir) => dir,
@@ -127,12 +130,13 @@ impl Entry for Fat32Entry {
             Err(e) => Err(VfsError::FsError(e)),
         }
     }
+    /// 清空文件内容，或者说截断到 0
     fn clear(&mut self) -> bool {
         match self {
             Fat32Entry::Dir(_) => return false,
             Fat32Entry::File(file) => {
                 file.seek(SeekFrom::Start(0)).unwrap();
-                file.truncate().is_err()
+                file.truncate().is_ok()
             }
         }
     }

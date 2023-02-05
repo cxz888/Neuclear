@@ -77,7 +77,7 @@ pub fn sys_clone(flags: usize, user_stack: usize, ptid: usize, tls: usize, ctid:
 /// - `path` 给出了要加载的可执行文件的名字，必须以 `\0` 结尾
 /// - `args` 给出了参数列表。其最后一个元素必须是一个 0
 pub fn sys_exec(path: *const u8, mut args: *const usize) -> Result {
-    let mut page_table = current_page_table();
+    let page_table = current_page_table();
     unsafe {
         let path = page_table.trans_str(path).ok_or(code::TEMP)?;
         let mut args_vec: Vec<String> = Vec::new();
@@ -96,7 +96,7 @@ pub fn sys_exec(path: *const u8, mut args: *const usize) -> Result {
         }
         let process = current_process();
         let argc = args_vec.len();
-        process.exec(&path, args_vec)?;
+        process.exec(path, args_vec)?;
         Ok(argc as isize)
     }
 }
