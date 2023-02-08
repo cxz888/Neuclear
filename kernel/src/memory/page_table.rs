@@ -4,8 +4,8 @@ use super::{
     frame_alloc, FrameTracker, MapPermission, PhysAddr, PhysPageNum, VirtAddr, VirtPageNum,
 };
 use crate::config::PAGE_SIZE;
+use crate::utils::error::{code, Result};
 
-use _core::ops::AddAssign;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -185,17 +185,13 @@ impl PageTable {
         String::from_utf8(string).ok()
     }
     /// 最好保证 non-alias。不过一般是用户 buffer
-    pub unsafe fn trans_byte_buffer(
-        &mut self,
-        ptr: *const u8,
-        len: usize,
-    ) -> Vec<&'static mut [u8]> {
+    pub unsafe fn trans_byte_buffer(&mut self, ptr: *mut u8, len: usize) -> Result<Vec<&mut [u8]>> {
         let mut start = VirtAddr::from(ptr);
         let end = start.add(len);
         let mut v = Vec::with_capacity(len / PAGE_SIZE + 2);
         while start < end {
             let mut vpn = start.vpn();
-            let mut ppn = self.translate(vpn).unwrap();
+            let mut ppn = self.translate(vpn).ok_or(code::EFAULT)?;
             vpn.0 += 1;
             let mut seg_end = vpn.page_start();
             seg_end = seg_end.min(end);
@@ -206,18 +202,19 @@ impl PageTable {
             }
             start = seg_end;
         }
-        v
+        Ok(v)
     }
 }
 
 /// An abstraction over a buffer passed from user space to kernel space
-pub struct UserBuffer {
-    pub buffers: Vec<&'static mut [u8]>,
+#[derive(Debug)]
+pub struct UserBuffer<'a> {
+    pub buffers: Vec<&'a mut [u8]>,
 }
 
-impl UserBuffer {
+impl<'a> UserBuffer<'a> {
     /// Constuct a UserBuffer
-    pub fn new(buffers: Vec<&'static mut [u8]>) -> Self {
+    pub fn new(buffers: Vec<&'a mut [u8]>) -> Self {
         Self { buffers }
     }
     /// Get the length of a UserBuffer
@@ -230,9 +227,9 @@ impl UserBuffer {
     }
 }
 
-impl IntoIterator for UserBuffer {
+impl<'a> IntoIterator for UserBuffer<'a> {
     type Item = *mut u8;
-    type IntoIter = UserBufferIterator;
+    type IntoIter = UserBufferIterator<'a>;
     fn into_iter(self) -> Self::IntoIter {
         UserBufferIterator {
             buffers: self.buffers,
@@ -243,13 +240,13 @@ impl IntoIterator for UserBuffer {
 }
 
 // An iterator over a UserBuffer
-pub struct UserBufferIterator {
-    buffers: Vec<&'static mut [u8]>,
+pub struct UserBufferIterator<'a> {
+    buffers: Vec<&'a mut [u8]>,
     current_buffer: usize,
     current_idx: usize,
 }
 
-impl Iterator for UserBufferIterator {
+impl Iterator for UserBufferIterator<'_> {
     type Item = *mut u8;
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_buffer >= self.buffers.len() {

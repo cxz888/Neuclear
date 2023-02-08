@@ -355,3 +355,17 @@ pub fn sys_uname(utsname: *mut UtsName) -> Result {
     }
     Ok(0)
 }
+
+/// 设置进程组号
+///
+/// TODO: 暂时未实现，仅返回 0
+pub fn sys_setpgid(pid: usize, pgid: usize) -> Result {
+    Ok(0)
+}
+
+/// 返回进程组号
+///
+/// TODO: 暂时未实现，仅返回 0
+pub fn sys_getpgid(pid: usize) -> Result {
+    Ok(0)
+}

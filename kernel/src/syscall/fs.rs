@@ -1,9 +1,9 @@
 //! File and filesystem-related syscalls
 
 use crate::{
-    fs::{make_pipe, open_file, OpenFlags, Stat},
+    fs::{make_pipe, open_file, File, OpenFlags, Stat},
     memory::{PageTable, UserBuffer, VirtAddr},
-    task::{current_page_table, current_process, current_task, current_user_token},
+    task::{current_page_table, current_process, current_user_token},
     utils::error::{code, Result},
 };
 use alloc::{
@@ -18,54 +18,118 @@ use alloc::{
 /// - `fd` 文件描述符
 /// - `cmd` 请求码，其含义完全由底层设备决定
 /// - `arg` 额外参数
-pub fn sys_ioctl(fd: usize, _cmd: usize, arg: *mut usize) -> Result {
+pub fn sys_ioctl(fd: usize, cmd: usize, arg: usize) -> Result {
+    log::debug!("ioctl fd: {fd}, cmd: {cmd}, arg: {arg}");
     if !matches!(current_process().inner().fd_table.get(fd), Some(Some(_))) {
         return Err(code::EBADF);
     }
-    if current_page_table()
-        .trans_va_to_pa(VirtAddr(arg as usize))
-        .is_none()
-    {
+    if current_page_table().trans_va_to_pa(VirtAddr(arg)).is_none() {
         return Err(code::EFAULT);
     }
     Ok(0)
 }
 
-pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> Result {
+#[rustfmt::skip]
+fn prepare_io(fd: usize, is_read: bool) -> Result<(Arc<dyn File>, PageTable)> {
     let process = current_process();
     let inner = process.inner();
-
-    if let Some(Some(file)) = inner.fd_table.get(fd) {
-        let file = Arc::clone(file);
-        let mut pt = PageTable::from_token(inner.user_token());
-        assert!(file.writable());
-        // write 有可能导致阻塞与任务切换
-        drop(inner);
-        drop(process);
-
-        let nwrite = file.write(UserBuffer::new(unsafe { pt.trans_byte_buffer(buf, len) }));
-        Ok(nwrite as isize)
+    if let Some(Some(file)) = inner.fd_table.get(fd) && 
+        ((is_read && file.readable()) || (!is_read&& file.writable()))
+    {
+        let file = Arc::clone(&file.clone());
+        if file.is_dir() {
+            return Err(code::EISDIR);
+        }
+        let pt = PageTable::from_token(inner.user_token());
+        Ok((file,pt))
     } else {
-        Err(code::TEMP)
+        Err(code::EBADF)
     }
 }
 
-pub fn sys_read(fd: usize, buf: *const u8, len: usize) -> Result {
-    let process = current_process();
-    let inner = process.inner();
+/// 从 fd 指示的文件中读至多 `len` 字节的数据到用户缓冲区中。成功时返回读入的字节数
+///
+/// 参数：
+/// - `fd` 指定的文件描述符，若无效则返回 `EBADF`，若是目录则返回 `EISDIR`
+/// - `buf` 指定用户缓冲区，若无效则返回 `EINVAL`
+/// - `len` 指定至多读取的字节数
+pub fn sys_read(fd: usize, buf: *mut u8, len: usize) -> Result {
+    let (file, mut pt) = prepare_io(fd, true)?;
+    let nread = file.read(UserBuffer::new(unsafe { pt.trans_byte_buffer(buf, len)? }));
+    Ok(nread as isize)
+}
 
-    if let Some(Some(file)) = inner.fd_table.get(fd) {
-        let file = Arc::clone(&file.clone());
-        let mut pt = PageTable::from_token(inner.user_token());
-        assert!(file.readable());
-        // read 有可能导致阻塞与任务切换
-        drop(inner);
-        drop(process);
-        let nread = file.read(UserBuffer::new(unsafe { pt.trans_byte_buffer(buf, len) }));
-        Ok(nread as isize)
-    } else {
-        Err(code::TEMP)
+/// 向 fd 指示的文件中写入至多 `len` 字节的数据。成功时返回写入的字节数
+///
+/// 参数：
+/// - `fd` 指定的文件描述符，若无效则返回 `EBADF`，若是目录则返回 `EISDIR`
+/// - `buf` 指定用户缓冲区，其中存放需要写入的内容，若无效则返回 `EINVAL`
+/// - `len` 指定至多写入的字节数
+pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> Result {
+    let (file, mut pt) = prepare_io(fd, false)?;
+    let nwrite = file.write(UserBuffer::new(unsafe {
+        pt.trans_byte_buffer(buf as _, len)?
+    }));
+    Ok(nwrite as isize)
+}
+
+#[repr(C)]
+pub struct IoVec {
+    iov_base: *mut u8,
+    iov_len: usize,
+}
+
+/// 从 fd 中读入数据，写入多个用户缓冲区中。
+///
+/// 理论上需要保证原子性，也就是说，即使同时有其他进程（线程）对同一个 fd 进行读操作，
+/// 这一个系统调用也会读入一块连续的区域。目前未实现。
+///
+/// 参数：
+/// - `fd` 指定文件描述符
+/// - `iovec` 指定 `IoVec` 数组
+/// - `vlen` 指定数组的长度
+pub fn sys_readv(fd: usize, iovec: *mut IoVec, vlen: usize) -> Result {
+    let (file, mut pt) = prepare_io(fd, true)?;
+
+    let mut tot_read = 0;
+    for i in 0..vlen {
+        unsafe {
+            let iovec = pt.trans_ptr_mut(iovec.add(i)).ok_or(code::EFAULT)?;
+            let nread = file.read(UserBuffer::new(
+                pt.trans_byte_buffer(iovec.iov_base, iovec.iov_len)?,
+            ));
+            if nread == 0 {
+                break;
+            }
+            tot_read += nread;
+        }
     }
+    Ok(tot_read as isize)
+}
+
+/// 向 fd 中写入数据，数据来自多个用户缓冲区。
+///
+/// 理论上需要保证原子性，也就是说，即使同时有其他进程（线程）对同一个 fd 进行写操作，
+/// 这一个系统调用也会写入一块连续的区域。目前未实现。
+///
+/// 参数：
+/// - `fd` 指定文件描述符
+/// - `iovec` 指定 `IoVec` 数组
+/// - `vlen` 指定数组的长度
+pub fn sys_writev(fd: usize, iovec: *const IoVec, vlen: usize) -> Result {
+    let (file, mut pt) = prepare_io(fd, false)?;
+
+    let mut tot_write = 0;
+
+    for i in 0..vlen {
+        unsafe {
+            let iovec = pt.trans_ptr(iovec.add(i)).ok_or(code::EFAULT)?;
+            let user_buffer = UserBuffer::new(pt.trans_byte_buffer(iovec.iov_base, iovec.iov_len)?);
+            let nwrite = file.write(user_buffer);
+            tot_write += nwrite;
+        }
+    }
+    Ok(tot_write as isize)
 }
 
 /// 不太清楚 `./` 开头的路径怎么处理。会借用当前进程
@@ -104,19 +168,25 @@ fn path_with_fd(fd: usize, path_name: String) -> Result<String> {
 ///     - 状态标志影响后续的 I/O 方式，而且可以动态修改
 /// - `mode` 是用于指定创建新文件时，该文件的 mode。目前应该不会用到
 ///     - 它只会影响未来访问该文件的模式，但这一次打开该文件可以是随意的
-pub fn sys_openat(dir_fd: usize, path_name: *const u8, flags: u32, mode: u32) -> Result {
+pub fn sys_openat(dir_fd: usize, path_name: *const u8, flags: u32, mut mode: u32) -> Result {
     let pt = current_page_table();
     let file_name = unsafe { pt.trans_str(path_name).ok_or(code::EFAULT)? };
-    assert_eq!(mode, 0);
 
     let Some(flags) = OpenFlags::from_bits(flags) else {
         log::error!("open flags: {flags:#b}");
         return Err(code::TEMP);
     };
+    log::info!("oepnat {dir_fd}, {file_name}, {flags:?}");
+    // 不是创建文件（以及临时文件）时，mode 被忽略
+    if !flags.contains(OpenFlags::O_CREAT) {
+        mode = 0;
+    }
+    assert_eq!(mode, 0, "dir_fd: {dir_fd}, flags: {flags:?}");
 
     // 64 位版本应当是保证可以打开大文件的
     assert!(flags.contains(OpenFlags::O_LARGEFILE));
 
+    // 暂时先不支持这些
     if flags.intersects(OpenFlags::O_ASYNC | OpenFlags::O_APPEND | OpenFlags::O_DSYNC) {
         log::error!("todo openflags: {flags:#b}");
         return Err(code::TEMP);
@@ -167,26 +237,39 @@ pub fn sys_pipe(pipe: *mut usize) -> isize {
 /// - `arg` 是该操作可选的参数
 pub fn sys_fcntl64(fd: usize, cmd: usize, arg: usize) -> Result {
     const F_DUPFD: usize = 0;
+    const F_GETFD: usize = 1;
+    const F_SETFD: usize = 2;
     const F_DUPFD_CLOEXEC: usize = 1030;
-    log::debug!("fd: {fd}, cmd: {cmd}, arg: {arg}");
+
     let process = current_process();
     let mut inner = process.inner();
-    let Some(Some(fd))=inner.fd_table.get(fd) else {
+    let Some(Some(file))=inner.fd_table.get(fd) else {
         return Err(code::EBADF);
     };
     match cmd {
         F_DUPFD | F_DUPFD_CLOEXEC => {
-            let new_fd = Arc::clone(fd);
-            let pos = inner.alloc_fd_from(arg);
+            let file = Arc::clone(file);
+            let new_fd = inner.alloc_fd_from(arg);
             if cmd == F_DUPFD_CLOEXEC {
-                new_fd.set_close_on_exec(true);
+                file.set_close_on_exec(true);
             }
-            inner.fd_table[pos] = Some(new_fd);
-            Ok(pos as isize)
+            inner.fd_table[new_fd] = Some(file);
+            Ok(new_fd as isize)
+        }
+        F_GETFD => {
+            if file.status().contains(OpenFlags::O_CLOEXEC) {
+                Ok(1)
+            } else {
+                Ok(0)
+            }
+        }
+        F_SETFD => {
+            file.set_close_on_exec(arg & 1 != 0);
+            Ok(0)
         }
         _ => {
             log::error!("unsupported cmd: {cmd}, with arg: {arg}");
-            Err(code::TEMP)
+            Err(code::EINVAL)
         }
     }
 }
@@ -239,4 +322,11 @@ pub fn sys_getcwd(mut buf: *mut u8, size: usize) -> Result {
     }
 
     Ok(buf as isize)
+}
+
+/// 等待文件描述符上的事件
+///
+/// TODO: 暂不实现 ppoll
+pub fn sys_ppoll() -> Result {
+    Ok(1)
 }
