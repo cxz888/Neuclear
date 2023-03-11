@@ -79,19 +79,15 @@ pub fn sys_clone(flags: usize, user_stack: usize, ptid: usize, tls: usize, ctid:
 pub fn sys_exec(path: *const u8, mut args: *const usize) -> Result {
     let page_table = current_page_table();
     unsafe {
-        let path = page_table.trans_str(path).ok_or(code::TEMP)?;
+        let path = page_table.trans_str(path)?;
         let mut args_vec: Vec<String> = Vec::new();
         // 收集参数列表
         loop {
-            let arg_str_ptr = *page_table.trans_ptr::<usize>(args).ok_or(code::TEMP)?;
+            let arg_str_ptr = *page_table.trans_ptr::<usize>(args)?;
             if arg_str_ptr == 0 {
                 break;
             }
-            args_vec.push(
-                page_table
-                    .trans_str(arg_str_ptr as *const u8)
-                    .ok_or(code::TEMP)?,
-            );
+            args_vec.push(page_table.trans_str(arg_str_ptr as *const u8)?);
             args = args.add(1);
         }
         let process = current_process();
@@ -121,7 +117,7 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> Result {
     let exit_code = child.inner().exit_code;
     let mut pt = PageTable::from_token(inner.memory_set.token());
     unsafe {
-        *pt.trans_ptr_mut(exit_code_ptr).ok_or(code::EFAULT)? = exit_code;
+        *pt.trans_ptr_mut(exit_code_ptr)? = exit_code;
     }
     Ok(found_pid as isize)
 }
@@ -130,7 +126,7 @@ const MICRO_PER_SEC: usize = 1_000_000;
 
 pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> Result {
     let mut pt = current_page_table();
-    let ts = unsafe { pt.trans_ptr_mut(ts).ok_or(code::TEMP)? };
+    let ts = unsafe { pt.trans_ptr_mut(ts)? };
     let us = get_time_us();
     ts.sec = us / MICRO_PER_SEC;
     ts.usec = us % MICRO_PER_SEC;
@@ -282,12 +278,12 @@ pub fn sys_sigaction(
     let mut pt = PageTable::from_token(inner.user_token());
 
     if !old_act.is_null() {
-        let old_act = unsafe { pt.trans_ptr_mut(old_act).ok_or(code::EFAULT)? };
+        let old_act = unsafe { pt.trans_ptr_mut(old_act)? };
         *old_act = inner.sig_handlers.action(signal);
     }
 
     if !act.is_null() {
-        let act = unsafe { pt.trans_ptr(act).ok_or(code::EFAULT)? };
+        let act = unsafe { pt.trans_ptr(act)? };
         inner.sig_handlers.set_action(signal, *act);
     }
 
@@ -320,7 +316,7 @@ pub fn sys_sigprocmask(
     let sig_set = &mut inner.sig_receiver.mask;
     if !old_set.is_null() {
         unsafe {
-            *pt.trans_ptr_mut(old_set).ok_or(code::EINVAL)? = *sig_set;
+            *pt.trans_ptr_mut(old_set)? = *sig_set;
         }
     }
     if set.is_null() {
@@ -329,7 +325,7 @@ pub fn sys_sigprocmask(
     const SIG_BLOCK: usize = 0;
     const SIG_UNBLOCK: usize = 1;
     const SIG_SETMASK: usize = 2;
-    let new_set = unsafe { *pt.trans_ptr(set).ok_or(code::EINVAL)? };
+    let new_set = unsafe { *pt.trans_ptr(set)? };
     match how {
         SIG_BLOCK => {
             sig_set.insert(new_set);
@@ -349,9 +345,7 @@ pub fn sys_sigprocmask(
 /// 返回系统信息，目前设计中永不失败，返回 0
 pub fn sys_uname(utsname: *mut UtsName) -> Result {
     unsafe {
-        *current_page_table()
-            .trans_ptr_mut(utsname)
-            .ok_or(code::EFAULT)? = UtsName::default();
+        *current_page_table().trans_ptr_mut(utsname)? = UtsName::default();
     }
     Ok(0)
 }

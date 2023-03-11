@@ -2,35 +2,33 @@ use crate::sync::UPSafeCell;
 use crate::utils::error::{code, Result};
 use crate::{driver_impl::BLOCK_DEVICE, memory::UserBuffer};
 
-use alloc::borrow::ToOwned;
 use alloc::string::String;
 use alloc::{sync::Arc, vec::Vec};
 use bitflags::bitflags;
+use drivers::BLOCK_SIZE;
 use fat32::{Fat32, Fat32Entry};
 use lazy_static::lazy_static;
 use vfs::{Entry, Fs};
 
-use super::{File, Stdout};
+use super::{File, Stat, StatMode};
 
 type OsEntry = Fat32Entry;
 type Vfs = Fat32;
 
-/// A wrapper around a filesystem inode
-/// to implement File trait atop
-pub struct OSFile {
+pub struct InodeFile {
     readable: bool,
     writable: bool,
     path: String,
-    inner: UPSafeCell<OSFileInner>,
+    inner: UPSafeCell<InodeFileInner>,
 }
 
 /// The OS inode inner in 'UPSafeCell'
-pub struct OSFileInner {
+pub struct InodeFileInner {
     entry: OsEntry,
     flags: OpenFlags,
 }
 
-impl OSFile {
+impl InodeFile {
     /// Construct an OS inode from a inode
     pub fn new(path: String, readable: bool, writable: bool, entry: OsEntry) -> Self {
         Self {
@@ -38,7 +36,7 @@ impl OSFile {
             readable,
             writable,
             inner: unsafe {
-                UPSafeCell::new(OSFileInner {
+                UPSafeCell::new(InodeFileInner {
                     entry,
                     flags: OpenFlags::empty(),
                 })
@@ -103,6 +101,7 @@ bitflags! {
         /// 设置打开的文件描述符的 close-on-exec 标志
         const O_CLOEXEC     = 1 << 19;
         // /// 仅打开一个文件描述符，而不实际打开文件。后续只允许进行纯文件描述符级别的操作
+        // TODO: 可能要考虑加上 O_PATH，似乎在某些情况下无法打开的文件可以通过它打开
         // const O_PATH        = 1 << 21;
     }
 }
@@ -121,7 +120,7 @@ impl OpenFlags {
     }
 }
 
-impl File for OSFile {
+impl File for InodeFile {
     fn readable(&self) -> bool {
         self.readable
     }
@@ -169,13 +168,29 @@ impl File for OSFile {
     fn path(&self) -> Option<&str> {
         Some(&self.path)
     }
+    fn fstat(&self) -> Stat {
+        let inner = self.inner.exclusive_access();
+        let st_size = inner.entry.size();
+        // FAT32 没有 inode 的概念，因此设为 1 即可；同时不支持链接，所以 nlink 直接设为 1
+        // TODO: FAT32 的时间十分粗略，所以暂时先不考虑时间了
+        Stat {
+            st_dev: 1,
+            st_ino: 1,
+            st_nlink: 1,
+            st_size,
+            st_mode: StatMode::S_IFIFO | StatMode::S_IRWXU | StatMode::S_IRWXG | StatMode::S_IRWXO,
+            st_blksize: BLOCK_SIZE,
+            ..Default::default()
+        }
+    }
 }
 
 /// 打开一个磁盘上的文件
-pub fn open_osfile(path: String, flags: OpenFlags) -> Result<OSFile> {
+pub fn open_inode(path: String, flags: OpenFlags) -> Result<InodeFile> {
     let (readable, writable) = flags.read_write();
     let mut curr = VIRTUAL_FS.root_dir();
     let mut path_split = path.split('/');
+    // 能够完成这个循环说明该文件是存在的
     while let Some(name) = path_split.next() {
         match curr.find(&name) {
             Ok(Some(next)) => {
@@ -185,11 +200,12 @@ pub fn open_osfile(path: String, flags: OpenFlags) -> Result<OSFile> {
                 // 最后一节路径未找到，若有 O_CREAT 则创建；否则返回 ENOENT
                 if path_split.next().is_none() && flags.contains(OpenFlags::O_CREAT) {
                     let file = curr.create(&name).unwrap();
-                    return Ok(OSFile::new(path, readable, writable, file));
+                    return Ok(InodeFile::new(path, readable, writable, file));
                 } else {
                     return Err(code::ENOENT);
                 }
             }
+            // 当前节点不是目录
             Err(vfs::Error::InvalidType) => {
                 return Err(code::ENOTDIR);
             }
@@ -198,24 +214,16 @@ pub fn open_osfile(path: String, flags: OpenFlags) -> Result<OSFile> {
             }
         }
     }
-    // 运行到此处说明未创建文件
+    // 文件存在，但要求必须要创建
     if flags.contains(OpenFlags::O_CREAT | OpenFlags::O_EXCL) {
         return Err(code::EEXIST);
+    }
+    // 文件存在，但要求必须是目录
+    if flags.contains(OpenFlags::O_DIRECTORY) && !curr.is_dir() {
+        return Err(code::ENOTDIR);
     }
     if flags.contains(OpenFlags::O_TRUNC) && flags.read_write().1 {
         curr.clear();
     }
-    Ok(OSFile::new(path, readable, writable, curr))
-}
-
-/// 根据路径打开一个文件。包括特殊文件
-pub fn open_file(path: String, flags: OpenFlags) -> Result<Arc<dyn File>> {
-    if path.starts_with("/dev") {
-        match path.as_str() {
-            "/dev/tty" => return Ok(Arc::new(Stdout)),
-            _ => return Err(code::ENOENT),
-        }
-    }
-    let osfile = open_osfile(path, flags)?;
-    Ok(Arc::new(osfile))
+    Ok(InodeFile::new(path, readable, writable, curr))
 }

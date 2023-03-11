@@ -3,9 +3,8 @@
 #![feature(panic_info_message)]
 #![feature(alloc_error_handler)]
 #![feature(step_trait)]
-#![feature(let_else)]
-#![feature(bench_black_box)]
 #![feature(assert_matches)]
+#![feature(let_chains)]
 
 extern crate alloc;
 

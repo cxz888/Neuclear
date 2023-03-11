@@ -9,7 +9,6 @@ use virtio_drivers::{VirtIOBlk, VirtIOHeader};
 
 use drivers::BlockDevice;
 
-#[allow(unused)]
 const VIRTIO0: usize = 0x10001000;
 
 pub struct VirtIOBlock(UPSafeCell<VirtIOBlk<'static>>);
@@ -34,7 +33,6 @@ impl BlockDevice for VirtIOBlock {
 }
 
 impl VirtIOBlock {
-    #[allow(unused)]
     pub fn new() -> Self {
         unsafe {
             Self(UPSafeCell::new(

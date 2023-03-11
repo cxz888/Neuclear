@@ -1,7 +1,8 @@
-use super::File;
+use super::{File, Stat, StatMode};
 use crate::memory::UserBuffer;
 use crate::sync::UPSafeCell;
 use alloc::sync::{Arc, Weak};
+use drivers::BLOCK_SIZE;
 
 use crate::task::suspend_current_and_run_next;
 
@@ -163,6 +164,14 @@ impl File for Pipe {
                     return write_size;
                 }
             }
+        }
+    }
+    fn fstat(&self) -> Stat {
+        Stat {
+            st_mode: StatMode::S_IFIFO | StatMode::S_IRWXU | StatMode::S_IRWXG | StatMode::S_IRWXO,
+            st_size: RING_BUFFER_SIZE as u64,
+            st_blksize: BLOCK_SIZE,
+            ..Default::default()
         }
     }
 }

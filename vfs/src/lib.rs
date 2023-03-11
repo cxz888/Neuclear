@@ -34,6 +34,7 @@ pub trait Entry {
         Self: Sized;
 
     fn clear(&mut self) -> bool;
+    fn size(&self) -> u64;
 }
 
 // pub fn ls(&self) -> Result<Vec<String>, Error<T::FsError>> {

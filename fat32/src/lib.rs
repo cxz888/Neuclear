@@ -1,6 +1,4 @@
 #![no_std]
-#![feature(mixed_integer_ops)]
-#![feature(generic_associated_types)]
 
 extern crate alloc;
 
@@ -140,11 +138,17 @@ impl Entry for Fat32Entry {
             }
         }
     }
+    fn size(&self) -> u64 {
+        match self {
+            Fat32Entry::Dir(_) => 0,
+            Fat32Entry::File(file) => file.size().map(u64::from).unwrap_or(0),
+        }
+    }
 }
 
 /// 一个利用缓存的磁盘驱动器。
 ///
-/// NOTE: 由于目前没有什么好的手段确定磁盘的总大小，假定读入时不会超过总大小
+/// TODO: 由于目前没有什么好的手段确定磁盘的总大小，假定读入时不会超过总大小
 pub struct DiskDriver {
     device: Arc<dyn BlockDevice>,
     block_id: u64,

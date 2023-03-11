@@ -108,6 +108,8 @@ impl PageTable {
         ret
     }
     /// 找到 `vpn` 对应的叶子页表项。注意，该页表项必须是 valid 的。
+    ///
+    /// TODO: 是否要将翻译相关的函数返回值改为 Result？
     fn find_pte(&self, vpn: VirtPageNum) -> Option<&PageTableEntry> {
         let idxs = vpn.indexes();
         let mut ppn = self.root_ppn;
@@ -151,25 +153,27 @@ impl PageTable {
     /// 转换用户指针（虚地址）。需要保证该指针指向的是合法的 T，且不会跨越页边界
     #[inline]
     #[track_caller]
-    pub unsafe fn trans_ptr<T>(&self, ptr: *const T) -> Option<&'static T> {
+    pub unsafe fn trans_ptr<T>(&self, ptr: *const T) -> Result<&'static T> {
         assert!(VirtAddr::from(ptr).page_offset() + core::mem::size_of::<T>() < PAGE_SIZE);
         self.trans_va_to_pa(VirtAddr::from(ptr))
             .map(|pa| pa.as_ref())
+            .ok_or(code::EFAULT)
     }
     /// 转换用户指针（虚地址）。需要保证该指针指向的是合法的 T，且不会跨越页边界
     #[inline]
     #[track_caller]
-    pub unsafe fn trans_ptr_mut<T>(&mut self, ptr: *mut T) -> Option<&'static mut T> {
+    pub unsafe fn trans_ptr_mut<T>(&mut self, ptr: *mut T) -> Result<&'static mut T> {
         assert!(VirtAddr::from(ptr).page_offset() + core::mem::size_of::<T>() < PAGE_SIZE);
         self.trans_va_to_pa(VirtAddr::from(ptr))
             .map(|pa| pa.as_mut())
+            .ok_or(code::EFAULT)
     }
     #[inline]
     pub fn token(&self) -> usize {
         (satp::Mode::Sv39 as usize) << 60 | self.root_ppn.0
     }
-    /// 需要保证 `ptr` 指向合法的、空终止的 utf-8 字符串
-    pub unsafe fn trans_str(&self, mut ptr: *const u8) -> Option<String> {
+    /// 需要保证 `ptr` 指向合法的、空终止的字符串
+    pub unsafe fn trans_str(&self, mut ptr: *const u8) -> Result<String> {
         let mut string = Vec::new();
         // 逐字节地读入字符串，效率较低，但因为字符串可能跨页存在需要如此。
         // NOTE: 可以进一步优化，如一次读一页等
@@ -182,7 +186,7 @@ impl PageTable {
                 ptr = ptr.add(1);
             }
         }
-        String::from_utf8(string).ok()
+        String::from_utf8(string).map_err(|_| code::EINVAL)
     }
     /// 最好保证 non-alias。不过一般是用户 buffer
     pub unsafe fn trans_byte_buffer(&mut self, ptr: *mut u8, len: usize) -> Result<Vec<&mut [u8]>> {

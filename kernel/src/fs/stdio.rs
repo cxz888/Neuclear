@@ -1,4 +1,6 @@
-use super::File;
+use drivers::BLOCK_SIZE;
+
+use super::{File, Stat, StatMode};
 use crate::memory::UserBuffer;
 use crate::task::suspend_current_and_run_next;
 use crate::utils::sbi::console_getchar;
@@ -36,6 +38,16 @@ impl File for Stdin {
     fn write(&self, _user_buf: UserBuffer) -> usize {
         panic!("Cannot write to stdin!");
     }
+    fn fstat(&self) -> Stat {
+        Stat {
+            st_dev: 1,
+            st_ino: 1,
+            st_nlink: 1,
+            st_mode: StatMode::S_IFCHR | StatMode::S_IRWXU | StatMode::S_IRWXG | StatMode::S_IRWXO,
+            st_blksize: BLOCK_SIZE,
+            ..Default::default()
+        }
+    }
 }
 
 impl File for Stdout {
@@ -53,5 +65,15 @@ impl File for Stdout {
             print!("{}", core::str::from_utf8(buffer).unwrap());
         }
         user_buf.len()
+    }
+    fn fstat(&self) -> Stat {
+        Stat {
+            st_dev: 1,
+            st_ino: 1,
+            st_nlink: 1,
+            st_mode: StatMode::S_IFCHR | StatMode::S_IRWXU | StatMode::S_IRWXG | StatMode::S_IRWXO,
+            st_blksize: BLOCK_SIZE,
+            ..Default::default()
+        }
     }
 }

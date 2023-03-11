@@ -94,7 +94,7 @@ pub fn sys_readv(fd: usize, iovec: *mut IoVec, vlen: usize) -> Result {
     let mut tot_read = 0;
     for i in 0..vlen {
         unsafe {
-            let iovec = pt.trans_ptr_mut(iovec.add(i)).ok_or(code::EFAULT)?;
+            let iovec = pt.trans_ptr_mut(iovec.add(i))?;
             let nread = file.read(UserBuffer::new(
                 pt.trans_byte_buffer(iovec.iov_base, iovec.iov_len)?,
             ));
@@ -123,7 +123,7 @@ pub fn sys_writev(fd: usize, iovec: *const IoVec, vlen: usize) -> Result {
 
     for i in 0..vlen {
         unsafe {
-            let iovec = pt.trans_ptr(iovec.add(i)).ok_or(code::EFAULT)?;
+            let iovec = pt.trans_ptr(iovec.add(i))?;
             let user_buffer = UserBuffer::new(pt.trans_byte_buffer(iovec.iov_base, iovec.iov_len)?);
             let nwrite = file.write(user_buffer);
             tot_write += nwrite;
@@ -170,7 +170,7 @@ fn path_with_fd(fd: usize, path_name: String) -> Result<String> {
 ///     - 它只会影响未来访问该文件的模式，但这一次打开该文件可以是随意的
 pub fn sys_openat(dir_fd: usize, path_name: *const u8, flags: u32, mut mode: u32) -> Result {
     let pt = current_page_table();
-    let file_name = unsafe { pt.trans_str(path_name).ok_or(code::EFAULT)? };
+    let file_name = unsafe { pt.trans_str(path_name)? };
 
     let Some(flags) = OpenFlags::from_bits(flags) else {
         log::error!("open flags: {flags:#b}");
@@ -288,6 +288,24 @@ pub fn sys_dup(fd: usize) -> Result {
     Ok(new_fd as isize)
 }
 
+pub fn sys_fstatat(dir_fd: usize, file_name: *const u8, statbuf: *mut Stat, flag: usize) -> Result {
+    // TODO: 暂时先不考虑 fstatat 的 flags
+    assert_eq!(flag, 0);
+    let mut pt = current_page_table();
+    let file_name = unsafe { pt.trans_str(file_name)? };
+    log::info!("fstatat {dir_fd}, {file_name}");
+    let statbuf = unsafe { pt.trans_ptr_mut(statbuf)? };
+    let absolute_path = path_with_fd(dir_fd, file_name)?;
+    log::info!("absolute path: {absolute_path}");
+
+    // TODO: 注意，可以尝试用 OpenFlags::O_PATH 打开试试
+    let file = open_file(absolute_path, OpenFlags::empty())?;
+
+    *statbuf = file.fstat();
+
+    Ok(0)
+}
+
 pub fn sys_fstat(_fd: usize, _st: *mut Stat) -> isize {
     -1
 }
@@ -315,10 +333,10 @@ pub fn sys_getcwd(mut buf: *mut u8, size: usize) -> Result {
     let mut pt = PageTable::from_token(inner.user_token());
     unsafe {
         for &byte in cwd.as_bytes() {
-            *pt.trans_ptr_mut(buf).ok_or(code::EFAULT)? = byte;
+            *pt.trans_ptr_mut(buf)? = byte;
             buf = buf.add(1);
         }
-        *pt.trans_ptr_mut(buf).ok_or(code::EFAULT)? = 0;
+        *pt.trans_ptr_mut(buf)? = 0;
     }
 
     Ok(buf as isize)

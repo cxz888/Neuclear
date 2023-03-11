@@ -10,7 +10,7 @@ use goblin::elf::{
 
 use crate::{
     config::PAGE_SIZE,
-    fs::{open_file, open_osfile, OpenFlags},
+    fs::{open_file, open_inode, OpenFlags},
     loader::stack::{InfoBlock, StackInit},
     memory::{MapArea, MapPermission, MapType, MemorySet, PageTable, VirtAddr, KERNEL_SPACE},
     task::ProcessControlBlockInner,
@@ -47,7 +47,7 @@ impl Loader {
         log::info!("path: {path}, args: {args:?}");
 
         // 读取和解析 ELF 内容
-        let app_inode = open_osfile(path, OpenFlags::O_RDONLY)?;
+        let app_inode = open_inode(path, OpenFlags::O_RDONLY)?;
         let elf_data = app_inode.read_all();
         let elf = Elf::parse(&elf_data).expect("should be valid elf");
 
