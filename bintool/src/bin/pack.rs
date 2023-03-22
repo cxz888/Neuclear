@@ -1,3 +1,5 @@
+//! 用于向操作系统镜像里面加入一些应用
+
 use std::fs::File;
 
 use fatfs::{FileSystem, FsOptions, Write};

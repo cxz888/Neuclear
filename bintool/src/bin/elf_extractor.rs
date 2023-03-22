@@ -1,3 +1,5 @@
+//! 用于从操作系统镜像中抽取文件内容
+
 use std::{fs::File, io::Read};
 
 use fatfs::{FileSystem, FsOptions};
@@ -17,10 +19,4 @@ fn main() {
         .read_to_end(&mut data)
         .unwrap();
     std::fs::write("lua.elf", data).unwrap();
-}
-
-#[test]
-fn test_wrapping() {
-    let a = usize::MAX - 1000;
-    println!("{}", a as isize);
 }

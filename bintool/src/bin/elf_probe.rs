@@ -1,3 +1,5 @@
+//! elf 探针。单纯是用于加载和查看 elf 内容的东西
+
 use std::{fs::File, io::Read};
 
 use fatfs::{FileSystem, FsOptions};
@@ -16,5 +18,5 @@ fn main() {
         .unwrap()
         .read_to_end(&mut data)
         .unwrap();
-    let elf = xmas_elf::ElfFile::new(&data).unwrap();
+    // let elf = xmas_elf::ElfFile::new(&data).unwrap();
 }
