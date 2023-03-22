@@ -27,7 +27,7 @@ impl BlockDevice for VirtIOBlock {
     fn write_block(&self, block_id: u64, buf: &[u8]) {
         self.0
             .exclusive_access()
-            .write_block(block_id, buf)
+            .write_block(block_id as usize, buf)
             .expect("Error when writing VirtIOBlk");
     }
 }
