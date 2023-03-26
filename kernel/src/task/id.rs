@@ -45,6 +45,7 @@ static PID_ALLOCATOR: UPSafeCell<RecycleAllocator> =
 static KSTACK_ALLOCATOR: UPSafeCell<RecycleAllocator> =
     unsafe { UPSafeCell::new(RecycleAllocator::new()) };
 
+#[derive(Debug)]
 pub struct PidHandle(pub usize);
 
 pub fn pid_alloc() -> PidHandle {

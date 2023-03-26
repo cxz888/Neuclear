@@ -1,6 +1,6 @@
 use alloc::{string::String, vec::Vec};
 
-use crate::{config::PTR_SIZE, memory::PageTable, utils::timer::get_time};
+use crate::{config::PTR_SIZE, memory::PageTable, utils::time::get_time};
 
 use super::AT_RANDOM;
 

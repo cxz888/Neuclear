@@ -6,7 +6,7 @@ use crate::{
     memory::UserBuffer,
     utils::{
         error::{code, Result},
-        time::Timespec,
+        time::TimeSpec,
     },
 };
 
@@ -67,11 +67,11 @@ pub struct Stat {
     /// TODO: 文件有空洞时，可能小于 st_size/512，暂且先不填吧
     pub st_blocks: u64,
     /// 最后一次访问时间 (Access TIME)
-    pub st_atime: Timespec,
+    pub st_atime: TimeSpec,
     /// 最后一次修改内容时间 (Modify TIME)
-    pub st_mtime: Timespec,
+    pub st_mtime: TimeSpec,
     /// 最后一次改变状态时间 (Change TIME)
-    pub st_ctime: Timespec,
+    pub st_ctime: TimeSpec,
     // ctime 在修改内容、属性时都会改变，而 mtime 只会在修改内容时改变
     // TODO: 非 Inode 文件的 time 属性该怎么处理？目前就是默认为 0
 }

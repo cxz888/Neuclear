@@ -1,6 +1,6 @@
 use crate::trap::trap_return;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 #[repr(C)]
 pub struct TaskContext {
     /// Ret position after task switching
@@ -20,7 +20,7 @@ impl TaskContext {
         }
     }
 
-    pub fn goto_trap_return(kstack_ptr: usize) -> Self {
+    pub fn trap_return_ctx(kstack_ptr: usize) -> Self {
         Self {
             ra: trap_return as usize,
             sp: kstack_ptr,

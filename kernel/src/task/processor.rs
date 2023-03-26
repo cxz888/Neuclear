@@ -54,15 +54,17 @@ pub fn run_tasks() {
         let mut processor = PROCESSOR.exclusive_access();
         if let Some(task) = fetch_task() {
             // println!("task get!");
-            let idle_task_ctx_ptr = processor.get_idle_task_ctx_ptr();
             // access coming task TCB exclusively
+            log::info!("next task pid: {:?}", task.process.upgrade().unwrap().pid);
             let mut task_inner = task.inner();
+            log::info!("next task ctx: {:x?}", task_inner.task_ctx);
             let next_task_ctx_ptr = &task_inner.task_ctx as *const TaskContext;
             task_inner.thread_status = ThreadStatus::Running;
             drop(task_inner);
             // release coming task TCB manually
             processor.current = Some(task);
             // release processor manually
+            let idle_task_ctx_ptr = processor.get_idle_task_ctx_ptr();
             drop(processor);
             unsafe {
                 __switch(idle_task_ctx_ptr, next_task_ctx_ptr);

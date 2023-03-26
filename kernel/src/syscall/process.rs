@@ -11,8 +11,8 @@ use crate::{
     },
     utils::{
         error::{code, Result},
-        structs::{TimeVal, UtsName},
-        timer::get_time_us,
+        structs::UtsName,
+        time::{get_time_ns, get_time_us, TimeSpec, TimeVal, MICRO_PER_SEC, NANO_PER_SEC},
     },
 };
 use alloc::{string::String, sync::Arc, vec::Vec};
@@ -122,14 +122,40 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> Result {
     Ok(found_pid as isize)
 }
 
-const MICRO_PER_SEC: usize = 1_000_000;
-
-pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> Result {
+/// 获取自 Epoch 以来所过的时间（不过目前实现中似乎是自开机或复位以来时间）
+///
+/// 参数：
+/// - `ts` 要设置的时间值
+/// - `tz` 时区结构，但目前已经过时，不考虑
+pub fn sys_get_time_of_day(ts: *mut TimeVal, _tz: usize) -> Result {
+    // 根据 man 所言，时区参数 tz 已经过时了，通常应当是 NULL。
+    assert_eq!(_tz, 0);
     let mut pt = current_page_table();
     let ts = unsafe { pt.trans_ptr_mut(ts)? };
     let us = get_time_us();
     ts.sec = us / MICRO_PER_SEC;
     ts.usec = us % MICRO_PER_SEC;
+    Ok(0)
+}
+
+/// 全局时钟，或者说挂钟
+const CLOCK_REALTIME: usize = 0;
+
+/// 同样是获取时间，不过 `TimeSpec` 精度为 ns。
+///
+/// 可以有不同的时钟，但目前只支持挂钟 (`CLOCK_REALTIME`)。
+///
+/// 参数：
+/// - `clock_id` 时钟 id，目前仅为 `CLOCK_READTIME`
+/// - `tp` 指向要设置的用户指针
+pub fn sys_clock_gettime(_clock_id: usize, tp: *mut TimeSpec) -> Result {
+    // TODO: 目前只考虑挂钟时间
+    assert_eq!(_clock_id, CLOCK_REALTIME);
+    let mut pt = current_page_table();
+    let tp = unsafe { pt.trans_ptr_mut(tp)? };
+    let ns = get_time_ns();
+    tp.sec = ns / NANO_PER_SEC;
+    tp.nsec = ns % NANO_PER_SEC;
     Ok(0)
 }
 

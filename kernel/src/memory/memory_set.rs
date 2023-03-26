@@ -254,6 +254,7 @@ impl MemorySet {
         let satp = self.page_table.token();
         unsafe {
             satp::write(satp);
+            // 切换了页表，所以清空 TLB
             core::arch::asm!("sfence.vma");
         }
     }

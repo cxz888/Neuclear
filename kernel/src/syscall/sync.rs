@@ -3,7 +3,7 @@ use crate::{
     task::{block_current_and_run_next, current_process, current_task},
     utils::{
         error::Result,
-        timer::{add_timer, get_time_ms},
+        time::{add_timer, get_time_ms},
     },
 };
 use alloc::sync::Arc;

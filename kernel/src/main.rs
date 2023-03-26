@@ -44,10 +44,7 @@ pub fn rust_main() -> ! {
     memory::init();
     trap::init();
     trap::enable_timer_interrupt();
-    utils::timer::set_next_trigger();
-    // Uncomment following lines and see what happens!
-    // task::kernel_stackless_coroutine_test();
-    // task::kernel_stackful_coroutine_test();
+    utils::time::set_next_trigger();
     fs::list_apps();
     task::add_initproc();
     task::run_tasks();

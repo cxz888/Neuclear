@@ -12,11 +12,9 @@ use core::cell::RefMut;
 ///
 /// Directly save the contents that will not change during running
 pub struct ThreadControlBlock {
-    // immutable
     pub process: Weak<ProcessControlBlock>,
     /// Kernel stack corresponding to TID
     pub kernel_stack: KernelStack,
-    // mutable
     inner: UPSafeCell<ThreadControlBlockInner>,
 }
 
@@ -54,6 +52,7 @@ impl ThreadControlBlockInner {
 }
 
 impl ThreadControlBlock {
+    /// 创建一个新的 TCB。初始的 TaskContext 返回到 `trap_return` 处
     pub fn new(process: &Arc<ProcessControlBlock>, alloc_user_res: bool) -> Self {
         let res = ThreadUserRes::new(process, alloc_user_res);
         // 如果这个为 0 说明用户资源暂时未分配。应当延后分配，比如 Load ELF 时
@@ -69,7 +68,7 @@ impl ThreadControlBlock {
                 UPSafeCell::new(ThreadControlBlockInner {
                     res: Some(res),
                     trap_ctx_ppn,
-                    task_ctx: TaskContext::goto_trap_return(kstack_top),
+                    task_ctx: TaskContext::trap_return_ctx(kstack_top),
                     thread_status: ThreadStatus::Ready,
                     exit_code: None,
                     clear_child_tid: 0,

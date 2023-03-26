@@ -38,8 +38,6 @@ impl ProcessControlBlock {
         let thread = Arc::new(ThreadControlBlock::new(&process, false));
         process.inner().threads.push(Some(Arc::clone(&thread)));
 
-        // 将主线程加入调度器
-        add_task(thread);
         process
     }
 

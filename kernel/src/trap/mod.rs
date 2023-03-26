@@ -6,7 +6,7 @@ use crate::task::{
     current_process, current_trap_ctx, current_trap_ctx_user_va, current_user_token,
 };
 use crate::task::{exit_current_and_run_next, suspend_current_and_run_next};
-use crate::utils::timer::{check_timer, set_next_trigger};
+use crate::utils::time::{check_timer, set_next_trigger};
 use riscv::register::{
     mtvec::TrapMode,
     scause::{self, Exception, Interrupt, Trap},

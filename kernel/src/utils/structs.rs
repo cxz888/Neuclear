@@ -33,10 +33,3 @@ impl Default for UtsName {
         }
     }
 }
-
-#[repr(C)]
-#[derive(Debug)]
-pub struct TimeVal {
-    pub sec: usize,
-    pub usec: usize,
-}
