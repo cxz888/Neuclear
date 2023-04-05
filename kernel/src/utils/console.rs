@@ -2,7 +2,7 @@
 
 use core::fmt::{self, Write};
 
-use super::sbi::console_putchar;
+use super::arch::console_putchar;
 
 struct Stdout;
 

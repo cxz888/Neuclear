@@ -33,17 +33,17 @@ impl BlockCache {
         &self.cache[offset] as *const _ as usize
     }
 
-    pub fn as_ref<T>(&self, offset: usize) -> &T
+    pub unsafe fn as_ref<T>(&self, offset: usize) -> &T
     where
         T: Sized,
     {
         let type_size = core::mem::size_of::<T>();
         assert!(offset + type_size <= BLOCK_SIZE as usize);
         let addr = self.addr_of_offset(offset);
-        unsafe { &*(addr as *const T) }
+        &*(addr as *const T)
     }
 
-    pub fn as_mut<T>(&mut self, offset: usize) -> &mut T
+    pub unsafe fn as_mut<T>(&mut self, offset: usize) -> &mut T
     where
         T: Sized,
     {
@@ -51,7 +51,7 @@ impl BlockCache {
         assert!(offset + type_size <= BLOCK_SIZE as usize);
         self.modified = true;
         let addr = self.addr_of_offset(offset);
-        unsafe { &mut *(addr as *mut T) }
+        &mut *(addr as *mut T)
     }
 
     pub fn read(&self, offset: u32, buf: &mut [u8]) -> u32 {
@@ -95,7 +95,7 @@ pub struct BlockCacheManager {
 }
 
 impl BlockCacheManager {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { queue: Vec::new() }
     }
 
@@ -129,12 +129,8 @@ impl BlockCacheManager {
     }
 }
 
-lazy_static! {
-    /// The global block cache manager
-    pub static ref BLOCK_CACHE_MANAGER: Mutex<BlockCacheManager> = Mutex::new(
-        BlockCacheManager::new()
-    );
-}
+/// The global block cache manager
+pub static BLOCK_CACHE_MANAGER: Mutex<BlockCacheManager> = Mutex::new(BlockCacheManager::new());
 
 /// Get the block cache corresponding to the given block id and block device
 pub fn get_block_cache(

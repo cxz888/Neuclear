@@ -6,6 +6,10 @@
 #![feature(assert_matches)]
 #![feature(let_chains)]
 
+use riscv::register::sstatus;
+
+use crate::utils::{logging, time};
+
 extern crate alloc;
 
 #[macro_use]
@@ -39,14 +43,14 @@ fn clear_bss() {
 /// the rust entry-point of os
 pub fn rust_main() -> ! {
     clear_bss();
-    utils::logging::init();
+    logging::init();
     println!("[kernel] Hello, world!");
     memory::init();
+    // 允许在内核态下访问用户数据
+    unsafe { sstatus::set_sum() };
     trap::init();
     trap::enable_timer_interrupt();
-    utils::time::set_next_trigger();
+    time::set_next_trigger();
     fs::list_apps();
-    task::add_initproc();
     task::run_tasks();
-    panic!("Unreachable in rust_main!");
 }

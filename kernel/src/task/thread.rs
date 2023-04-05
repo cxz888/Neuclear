@@ -15,7 +15,7 @@ pub struct ThreadControlBlock {
     pub process: Weak<ProcessControlBlock>,
     /// Kernel stack corresponding to TID
     pub kernel_stack: KernelStack,
-    inner: UPSafeCell<ThreadControlBlockInner>,
+    tcb_inner: UPSafeCell<ThreadControlBlockInner>,
 }
 
 /// Structure containing more process content
@@ -64,7 +64,7 @@ impl ThreadControlBlock {
         Self {
             process: Arc::downgrade(process),
             kernel_stack,
-            inner: unsafe {
+            tcb_inner: unsafe {
                 UPSafeCell::new(ThreadControlBlockInner {
                     res: Some(res),
                     trap_ctx_ppn,
@@ -80,7 +80,7 @@ impl ThreadControlBlock {
 
     #[track_caller]
     pub fn inner(&self) -> RefMut<'_, ThreadControlBlockInner> {
-        self.inner.exclusive_access()
+        self.tcb_inner.exclusive_access()
     }
 
     #[track_caller]

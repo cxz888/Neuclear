@@ -81,6 +81,8 @@ impl MemorySet {
             0,
             None,
         );
+        // 注：旧版的 Linux 中，text 段和 rodata 段是合并在一起的，这样可以减少一次映射
+        // 新版本则独立开来了，参考 https://stackoverflow.com/questions/44938745/rodata-section-loaded-in-executable-page
         log::info!("mapping .rodata section");
         memory_set.push(
             MapArea::new(
@@ -250,6 +252,7 @@ impl MemorySet {
         );
     }
 
+    /// 只在内核态调用，执行流不会跳变
     pub fn activate(&self) {
         let satp = self.page_table.token();
         unsafe {

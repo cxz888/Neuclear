@@ -32,9 +32,9 @@ impl From<MapPermission> for PTEFlags {
     }
 }
 
+/// page table entry structure
 #[derive(Copy, Clone)]
 #[repr(C)]
-/// page table entry structure
 pub struct PageTableEntry {
     pub bits: usize,
 }
@@ -60,7 +60,7 @@ impl PageTableEntry {
     }
 }
 
-/// page table structure
+/// 页表，其内跟踪了页表所占用的帧，页表释放时，释放这些帧
 pub struct PageTable {
     root_ppn: PhysPageNum,
     frames: Vec<FrameTracker>,

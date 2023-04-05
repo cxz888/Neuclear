@@ -138,13 +138,6 @@ lazy_static! {
     pub static ref INITPROC: Arc<ProcessControlBlock> = {
         let pcb = ProcessControlBlock::new();
         Loader::load(&mut pcb.inner(), "initproc".to_string(), Vec::new()).expect("INITPROC Failed.");
-        add_task(pcb.inner().main_thread());
         pcb
     };
-}
-
-pub fn add_initproc() {
-    // INITPROC must be referenced at least once so that it can be initialized
-    // through lazy_static
-    INITPROC.pid();
 }

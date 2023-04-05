@@ -3,7 +3,7 @@ use drivers::BLOCK_SIZE;
 use super::{File, Stat, StatMode};
 use crate::memory::UserBuffer;
 use crate::task::suspend_current_and_run_next;
-use crate::utils::sbi::console_getchar;
+use crate::utils::arch::console_getchar;
 
 /// The standard input
 pub struct Stdin;

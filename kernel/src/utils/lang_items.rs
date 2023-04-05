@@ -1,6 +1,6 @@
 //! The panic handler
 
-use crate::utils::{console::ANSICON, sbi::shutdown};
+use crate::utils::{arch::shutdown, console::ANSICON};
 
 use core::panic::PanicInfo;
 

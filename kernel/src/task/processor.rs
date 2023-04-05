@@ -49,29 +49,24 @@ lazy_static! {
 ///
 /// Loop fetch_task to get the process that needs to run,
 /// and switch the process through __switch
-pub fn run_tasks() {
+pub fn run_tasks() -> ! {
     loop {
+        let task = fetch_task().expect("No more tasks avaliable.");
         let mut processor = PROCESSOR.exclusive_access();
-        if let Some(task) = fetch_task() {
-            // println!("task get!");
-            // access coming task TCB exclusively
-            log::info!("next task pid: {:?}", task.process.upgrade().unwrap().pid);
-            let mut task_inner = task.inner();
-            log::info!("next task ctx: {:x?}", task_inner.task_ctx);
-            let next_task_ctx_ptr = &task_inner.task_ctx as *const TaskContext;
-            task_inner.thread_status = ThreadStatus::Running;
-            drop(task_inner);
-            // release coming task TCB manually
-            processor.current = Some(task);
-            // release processor manually
-            let idle_task_ctx_ptr = processor.get_idle_task_ctx_ptr();
-            drop(processor);
-            unsafe {
-                __switch(idle_task_ctx_ptr, next_task_ctx_ptr);
-            }
-        } else {
-            panic!("no tasks available in run_tasks");
-        }
+        log::info!("next task pid: {:?}", task.process.upgrade().unwrap().pid);
+        let mut task_inner = task.inner();
+        log::info!("next task ctx: {:x?}", task_inner.task_ctx);
+        let next_task_ctx_ptr = &task_inner.task_ctx as *const TaskContext;
+        task_inner.thread_status = ThreadStatus::Running;
+        drop(task_inner);
+        // release coming task TCB manually
+        processor.current = Some(task);
+        // release processor manually
+        let idle_task_ctx_ptr = processor.get_idle_task_ctx_ptr();
+        drop(processor);
+        unsafe {
+            __switch(idle_task_ctx_ptr, next_task_ctx_ptr);
+        };
     }
 }
 

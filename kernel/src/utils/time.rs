@@ -15,7 +15,7 @@ pub struct TimeVal {
 use crate::config::CLOCK_FREQ;
 use crate::sync::UPSafeCell;
 use crate::task::{add_task, ThreadControlBlock};
-use crate::utils::sbi::set_timer;
+use crate::utils::arch::set_timer;
 use alloc::collections::BinaryHeap;
 use alloc::sync::Arc;
 use core::cmp::Ordering;

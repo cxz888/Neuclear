@@ -2,6 +2,8 @@
 
 #![allow(unused)]
 
+use riscv::register::sstatus;
+
 const SBI_SET_TIMER: usize = 0;
 const SBI_CONSOLE_PUTCHAR: usize = 1;
 const SBI_CONSOLE_GETCHAR: usize = 2;

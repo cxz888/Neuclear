@@ -17,13 +17,13 @@ use core::cell::RefMut;
 
 pub struct ProcessControlBlock {
     pub pid: PidHandle,
-    inner: UPSafeCell<ProcessControlBlockInner>,
+    pcb_inner: UPSafeCell<ProcessControlBlockInner>,
 }
 
 impl ProcessControlBlock {
     #[track_caller]
     pub fn inner(&self) -> RefMut<ProcessControlBlockInner> {
-        self.inner.exclusive_access()
+        self.pcb_inner.exclusive_access()
     }
 
     /// 一个空的进程，接下来应该紧跟着 `load()` 来加载 ELF 数据。
@@ -32,7 +32,7 @@ impl ProcessControlBlock {
         let pid = pid_alloc();
         let process = Arc::new(Self {
             pid,
-            inner: unsafe { UPSafeCell::new(ProcessControlBlockInner::default()) },
+            pcb_inner: unsafe { UPSafeCell::new(ProcessControlBlockInner::default()) },
         });
         // 创建主线程，这里不急着分配线程资源，因为 load 中会分配
         let thread = Arc::new(ThreadControlBlock::new(&process, false));
@@ -55,7 +55,7 @@ impl ProcessControlBlock {
         // create child process pcb
         let child = Arc::new(Self {
             pid,
-            inner: unsafe {
+            pcb_inner: unsafe {
                 UPSafeCell::new(ProcessControlBlockInner {
                     memory_set,
                     parent: Arc::downgrade(self),

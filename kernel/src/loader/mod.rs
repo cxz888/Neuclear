@@ -113,7 +113,7 @@ impl Loader {
     }
 }
 
-// 加载所有段，返回 ELF 数据的起始地址和结束地址。结束地址向上对齐到页边界
+/// 加载所有段，返回 ELF 数据的起始地址和结束地址。结束地址向上对齐到页边界
 fn load_sections(elf: &Elf, elf_data: &[u8], memory_set: &mut MemorySet) -> (usize, usize) {
     // 加载段
     let mut elf_base = 0;
