@@ -228,6 +228,7 @@ pub fn sys_mmap(addr: usize, len: usize, prot: u32, flags: u32, fd: i32, offset:
         let process = current_process();
         log::debug!("pid: {}", process.pid());
         let mut inner = process.inner();
+        // TODO: 还没有处理 MmapFlags::MAP_FIXED 的情况？
         return inner.memory_set.try_map(
             VirtAddr(addr).vpn()..VirtAddr(addr + len).vpn(),
             prot.into(),
@@ -235,7 +236,7 @@ pub fn sys_mmap(addr: usize, len: usize, prot: u32, flags: u32, fd: i32, offset:
         );
     }
 
-    todo!()
+    todo!("其他映射尚未实现")
 }
 
 pub fn sys_munmap(addr: usize, len: usize) -> isize {

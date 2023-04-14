@@ -1,7 +1,8 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
 use super::{
-    frame_alloc, FrameTracker, MapPermission, PhysAddr, PhysPageNum, VirtAddr, VirtPageNum,
+    frame_alloc, kernel_ppn_to_vpn, FrameTracker, MapPermission, PhysAddr, PhysPageNum, VirtAddr,
+    VirtPageNum,
 };
 use crate::config::PAGE_SIZE;
 use crate::utils::error::{code, Result};
@@ -33,7 +34,7 @@ impl From<MapPermission> for PTEFlags {
 }
 
 /// page table entry structure
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 #[repr(C)]
 pub struct PageTableEntry {
     pub bits: usize,
@@ -85,6 +86,24 @@ impl PageTable {
             frames: Vec::new(),
         }
     }
+    /// 找到 `vpn` 对应的叶子页表项。注意，该页表项必须是 valid 的。
+    ///
+    /// TODO: 是否要将翻译相关的函数返回值改为 Result？
+    fn find_pte(&self, vpn: VirtPageNum) -> Option<&PageTableEntry> {
+        let idxs = vpn.indexes();
+        let mut ppn = self.root_ppn;
+        let mut ret = None;
+        for idx in idxs {
+            // 因为从 root_ppn 开始，只要保证 root_ppn 合法则 pte 合法
+            let pte = unsafe { &kernel_ppn_to_vpn(ppn).as_page_ptes()[idx] };
+            if !pte.is_valid() {
+                return None;
+            }
+            ret = Some(pte);
+            ppn = pte.ppn();
+        }
+        ret
+    }
     /// 找到 `vpn` 对应的叶子页表项。注意不保证该页表项 valid，需调用方自己修改
     fn find_pte_create(&mut self, vpn: VirtPageNum) -> Option<&mut PageTableEntry> {
         let idxs = vpn.indexes();
@@ -92,7 +111,7 @@ impl PageTable {
         let mut ret: Option<&mut PageTableEntry> = None;
         for (i, &idx) in idxs.iter().enumerate() {
             // 因为从 root_ppn 开始，只要保证 root_ppn 合法则 pte 合法
-            let pte = unsafe { &mut ppn.as_page_ptes_mut()[idx] };
+            let pte = unsafe { &mut kernel_ppn_to_vpn(ppn).as_page_ptes_mut()[idx] };
             // 这里假定为 3 级页表
             if i == 2 {
                 ret = Some(pte);
@@ -103,24 +122,6 @@ impl PageTable {
                 *pte = PageTableEntry::new(frame.ppn, PTEFlags::V);
                 self.frames.push(frame);
             }
-            ppn = pte.ppn();
-        }
-        ret
-    }
-    /// 找到 `vpn` 对应的叶子页表项。注意，该页表项必须是 valid 的。
-    ///
-    /// TODO: 是否要将翻译相关的函数返回值改为 Result？
-    fn find_pte(&self, vpn: VirtPageNum) -> Option<&PageTableEntry> {
-        let idxs = vpn.indexes();
-        let mut ppn = self.root_ppn;
-        let mut ret = None;
-        for idx in idxs {
-            // 因为从 root_ppn 开始，只要保证 root_ppn 合法则 pte 合法
-            let pte = unsafe { &ppn.as_page_ptes()[idx] };
-            if !pte.is_valid() {
-                return None;
-            }
-            ret = Some(pte);
             ppn = pte.ppn();
         }
         ret
@@ -151,28 +152,36 @@ impl PageTable {
         })
     }
     /// 转换用户指针（虚地址）。需要保证该指针指向的是合法的 T，且不会跨越页边界
+    ///
+    /// TODO: 废弃该函数
     #[inline]
     #[track_caller]
     pub unsafe fn trans_ptr<T>(&self, ptr: *const T) -> Result<&'static T> {
-        assert!(VirtAddr::from(ptr).page_offset() + core::mem::size_of::<T>() < PAGE_SIZE);
-        self.trans_va_to_pa(VirtAddr::from(ptr))
-            .map(|pa| pa.as_ref())
-            .ok_or(code::EFAULT)
+        Ok(&*ptr)
+        // assert!(VirtAddr::from(ptr).page_offset() + core::mem::size_of::<T>() < PAGE_SIZE);
+        // self.trans_va_to_pa(VirtAddr::from(ptr))
+        //     .map(|pa| pa.as_ref())
+        //     .ok_or(code::EFAULT)
     }
     /// 转换用户指针（虚地址）。需要保证该指针指向的是合法的 T，且不会跨越页边界
+    ///
+    /// TODO: 废弃该函数
     #[inline]
     #[track_caller]
     pub unsafe fn trans_ptr_mut<T>(&mut self, ptr: *mut T) -> Result<&'static mut T> {
-        assert!(VirtAddr::from(ptr).page_offset() + core::mem::size_of::<T>() < PAGE_SIZE);
-        self.trans_va_to_pa(VirtAddr::from(ptr))
-            .map(|pa| pa.as_mut())
-            .ok_or(code::EFAULT)
+        Ok(&mut *ptr)
+        // assert!(VirtAddr::from(ptr).page_offset() + core::mem::size_of::<T>() < PAGE_SIZE);
+        // self.trans_va_to_pa(VirtAddr::from(ptr))
+        //     .map(|mut pa| pa.as_mut())
+        //     .ok_or(code::EFAULT)
     }
     #[inline]
     pub fn token(&self) -> usize {
         (satp::Mode::Sv39 as usize) << 60 | self.root_ppn.0
     }
     /// 需要保证 `ptr` 指向合法的、空终止的字符串
+    ///
+    /// TODO: 废弃该函数
     pub unsafe fn trans_str(&self, mut ptr: *const u8) -> Result<String> {
         let mut string = Vec::new();
         // 逐字节地读入字符串，效率较低，但因为字符串可能跨页存在需要如此。
@@ -189,6 +198,8 @@ impl PageTable {
         String::from_utf8(string).map_err(|_| code::EINVAL)
     }
     /// 最好保证 non-alias。不过一般是用户 buffer
+    ///
+    /// TODO: 废弃该函数
     pub unsafe fn trans_byte_buffer(&mut self, ptr: *mut u8, len: usize) -> Result<Vec<&mut [u8]>> {
         let mut start = VirtAddr::from(ptr);
         let end = start.add(len);
@@ -200,9 +211,12 @@ impl PageTable {
             let mut seg_end = vpn.page_start();
             seg_end = seg_end.min(end);
             if seg_end.page_offset() == 0 {
-                v.push(&mut ppn.as_page_bytes_mut()[start.page_offset()..]);
+                v.push(&mut kernel_ppn_to_vpn(ppn).as_page_bytes_mut()[start.page_offset()..]);
             } else {
-                v.push(&mut ppn.as_page_bytes_mut()[start.page_offset()..seg_end.page_offset()]);
+                v.push(
+                    &mut kernel_ppn_to_vpn(ppn).as_page_bytes_mut()
+                        [start.page_offset()..seg_end.page_offset()],
+                );
             }
             start = seg_end;
         }

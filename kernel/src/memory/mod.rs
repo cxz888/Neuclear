@@ -9,6 +9,20 @@ pub use frame_allocator::{frame_alloc, frame_dealloc, FrameTracker};
 pub use memory_set::{kernel_token, MapArea, MapPermission, MapType, MemorySet, KERNEL_SPACE};
 pub use page_table::{PTEFlags, PageTable, PageTableEntry, UserBuffer};
 
+use crate::config::{PAGE_SIZE, PA_TO_VA};
+
+pub fn kernel_va_to_pa(va: VirtAddr) -> PhysAddr {
+    PhysAddr(va.0 - PA_TO_VA)
+}
+
+pub fn kernel_pa_to_va(pa: PhysAddr) -> VirtAddr {
+    VirtAddr(pa.0 + PA_TO_VA)
+}
+
+pub fn kernel_ppn_to_vpn(ppn: PhysPageNum) -> VirtPageNum {
+    VirtPageNum(ppn.0 + PA_TO_VA / PAGE_SIZE)
+}
+
 /// initiate heap allocator, frame allocator and kernel space
 pub fn init() {
     unsafe { heap_allocator::init_heap() };

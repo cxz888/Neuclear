@@ -65,6 +65,7 @@ pub fn kernel_stack_position(kstack_id: usize) -> (usize, usize) {
     (bottom, top)
 }
 
+/// 内核栈，进程在内核中进行处理时所使用的的栈，紧邻 TRAMPOLINE 正下方。
 pub struct KernelStack(pub usize);
 
 pub fn kstack_alloc() -> KernelStack {

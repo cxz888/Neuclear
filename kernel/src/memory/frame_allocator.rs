@@ -1,8 +1,9 @@
 //! Implementation of [`FrameAllocator`] which
 //! controls all the frames in the operating system.
 
-use super::{PhysAddr, PhysPageNum};
-use crate::config::MEMORY_END;
+use super::{kernel_ppn_to_vpn, PhysPageNum, VirtPageNum};
+use crate::config::{MEMORY_END, PAGE_SIZE, PA_TO_VA};
+use crate::memory::{kernel_va_to_pa, VirtAddr};
 use crate::sync::UPSafeCell;
 use alloc::vec::Vec;
 
@@ -14,10 +15,18 @@ pub struct FrameTracker {
 
 impl FrameTracker {
     // 分配一个新的物理帧，同时会将该物理帧清空
-    pub fn new(mut ppn: PhysPageNum) -> Self {
-        let bytes_array = unsafe { ppn.as_page_bytes_mut() };
-        bytes_array.fill(0);
-        Self { ppn }
+    pub fn new(ppn: PhysPageNum) -> Self {
+        let mut frame = Self { ppn };
+        frame.fill(0);
+        frame
+    }
+
+    fn fill(&mut self, byte: u8) {
+        let mut vpn = kernel_ppn_to_vpn(self.ppn);
+        unsafe {
+            let bytes = vpn.as_page_bytes_mut();
+            bytes.fill(byte);
+        }
     }
 }
 
@@ -85,8 +94,8 @@ pub fn init_frame_allocator() {
         fn ekernel();
     }
     FRAME_ALLOCATOR.exclusive_access().init(
-        PhysAddr(ekernel as usize).ceil(),
-        PhysAddr(MEMORY_END).floor(),
+        kernel_va_to_pa(VirtAddr(ekernel as usize)).ceil(),
+        kernel_va_to_pa(VirtAddr(MEMORY_END)).floor(),
     );
 }
 
@@ -99,25 +108,7 @@ pub fn frame_alloc() -> Option<FrameTracker> {
 }
 
 /// deallocate a frame
+#[track_caller]
 pub fn frame_dealloc(ppn: PhysPageNum) {
     FRAME_ALLOCATOR.exclusive_access().dealloc(ppn);
-}
-
-#[allow(unused)]
-/// a simple test for frame allocator
-pub fn frame_allocator_test() {
-    let mut v: Vec<FrameTracker> = Vec::new();
-    for i in 0..5 {
-        let frame = frame_alloc().unwrap();
-        log::info!("{:?}", frame);
-        v.push(frame);
-    }
-    v.clear();
-    for i in 0..5 {
-        let frame = frame_alloc().unwrap();
-        log::info!("{:?}", frame);
-        v.push(frame);
-    }
-    drop(v);
-    log::info!("frame_allocator_test passed!");
 }

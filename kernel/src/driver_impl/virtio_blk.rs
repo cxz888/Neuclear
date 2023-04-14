@@ -1,6 +1,7 @@
+use crate::config::PA_TO_VA;
 use crate::memory::{
-    frame_alloc, frame_dealloc, kernel_token, FrameTracker, PageTable, PhysAddr, PhysPageNum,
-    VirtAddr,
+    frame_alloc, frame_dealloc, kernel_pa_to_va, kernel_token, kernel_va_to_pa, FrameTracker,
+    PageTable, PhysAddr, PhysPageNum, VirtAddr,
 };
 use crate::sync::UPSafeCell;
 use alloc::vec::Vec;
@@ -36,7 +37,7 @@ impl VirtIOBlock {
     pub fn new() -> Self {
         unsafe {
             Self(UPSafeCell::new(
-                VirtIOBlk::new(&mut *(VIRTIO0 as *mut VirtIOHeader)).unwrap(),
+                VirtIOBlk::new(&mut *((VIRTIO0 + PA_TO_VA) as *mut VirtIOHeader)).unwrap(),
             ))
         }
     }
@@ -68,12 +69,10 @@ pub extern "C" fn virtio_dma_dealloc(pa: PhysAddr, pages: usize) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn virtio_phys_to_virt(paddr: PhysAddr) -> VirtAddr {
-    VirtAddr(paddr.0)
+    kernel_pa_to_va(paddr)
 }
 
 #[no_mangle]
 pub extern "C" fn virtio_virt_to_phys(vaddr: VirtAddr) -> PhysAddr {
-    PageTable::from_token(kernel_token())
-        .trans_va_to_pa(vaddr)
-        .unwrap()
+    kernel_va_to_pa(vaddr)
 }

@@ -1,129 +1,96 @@
 //! SBI console driver, for text output
 
-use core::fmt::{self, Write};
+use crate::sync::UPSafeCell;
 
 use super::arch::console_putchar;
 
-struct Stdout;
+use core::fmt::{Arguments, Result, Write};
+
+/// 绕过所有锁打印一个字符
+#[inline]
+fn putchar_raw(c: u8) {
+    console_putchar(c as _);
+}
+
+/// 标准输出
+pub struct Stdout;
 
 impl Write for Stdout {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        for c in s.chars() {
-            console_putchar(c as usize);
+    fn write_str(&mut self, s: &str) -> Result {
+        for c in s.bytes() {
+            if c == 127 {
+                putchar_raw(8);
+                putchar_raw(b' ');
+                putchar_raw(8);
+            } else {
+                putchar_raw(c);
+            }
         }
         Ok(())
     }
 }
 
-pub fn print(args: fmt::Arguments) {
-    Stdout.write_fmt(args).unwrap();
+pub static STDOUT: UPSafeCell<Stdout> = unsafe { UPSafeCell::new(Stdout) };
+pub static STDERR: UPSafeCell<Stdout> = unsafe { UPSafeCell::new(Stdout) };
+
+/// 输出到 stdout
+#[inline]
+pub fn stdout_puts(fmt: Arguments) {
+    STDOUT.exclusive_access().write_fmt(fmt).unwrap();
 }
 
+/// 输出到 stderr
+#[inline]
+pub fn stderr_puts(fmt: Arguments) {
+    // 使 stdout 不要干扰 stderr 输出
+    // 如果能拿到锁，说明此时没有核在输出 STDOUT，那么 STDERR 优先输出，不让其他核打断
+    // 如不能，则有可能 STDOUT 已卡死了，此时也直接输出
+    let _stdout = STDOUT.exclusive_access();
+    STDERR.exclusive_access().write_fmt(fmt).unwrap();
+}
+
+#[inline]
+pub fn print(args: Arguments) {
+    stdout_puts(args);
+}
+
+#[inline]
+pub fn error_print(args: Arguments) {
+    stderr_puts(args);
+}
+
+/// 打印格式字串，无换行
 #[macro_export]
-/// print string macro
 macro_rules! print {
-    ($fmt: literal $(, $($arg: tt)+)?) => {
-        $crate::utils::console::print(format_args!($fmt $(, $($arg)+)?));
+    ($($arg:tt)*) => {
+        $crate::utils::console::print(core::format_args!($($arg)*));
     }
 }
 
+/// 打印格式字串，使用与 print 不同的 Mutex 锁
 #[macro_export]
-/// println string macro
+macro_rules! eprint {
+    ($($arg:tt)*) => {
+        $crate::console::error_print(core::format_args!($($arg)*));
+    }
+}
+
+/// 打印格式字串，有换行
+#[macro_export]
 macro_rules! println {
-    ($fmt: literal $(, $($arg: tt)+)?) => {
-        $crate::utils::console::print(format_args!(concat!($fmt, "\n") $(, $($arg)+)?));
+    () => ($crate::print!("\n"));
+    ($($arg:tt)*) => {
+        $crate::utils::console::print(core::format_args!($($arg)*));
+        $crate::println!();
     }
 }
 
-/// 以下代码提供了与颜色相关的 ANSI 转义字符，以及彩色输出可以使用的函数与宏。
-/// 可以使用它们，甚至扩展它们，来提升开发体验和显示效果。
-/// 使用 ANSI 转义字符来加上颜色
+/// 打印格式字串，使用与 println 不同的 Mutex 锁
 #[macro_export]
-macro_rules! colorize {
-    ($content: ident, $foreground_color: ident) => {
-        format_args!("\u{1B}[{}m{}\u{1B}[0m", $foreground_color as u8, $content)
-    };
-    ($content: ident, $foreground_color: ident, $background_color: ident) => {
-        format_args!(
-            "\u{1B}[{}m\u{1B}[{}m{}\u{1B}[0m",
-            $foreground_color.into(),
-            $background_color.into(),
-            $content
-        )
-    };
-}
-
-pub fn print_colorized(
-    args: fmt::Arguments,
-    foreground_color: impl Into<u8>,
-    background_color: impl Into<u8>,
-) {
-    Stdout
-        .write_fmt(colorize!(args, foreground_color, background_color))
-        .unwrap();
-}
-
-/// 带色彩的 print
-#[macro_export]
-macro_rules! print_colorized {
-    ($fmt: literal, $foreground_color: expr, $background_color: expr $(, $($arg: tt)+)?) => {
-        $crate::utils::console::print_colorized(format_args!($fmt $(, $($arg)+)?), $foreground_color as u8, $background_color as u8);
-    };
-}
-
-/// 带色彩的 println
-#[macro_export]
-macro_rules! println_colorized {
-    ($fmt: literal, $foreground_color: expr, $background_color: expr $(, $($arg: tt)+)?) => {
-        $crate::utils::console::print_colorized(format_args!(concat!($fmt, "\n") $(, $($arg)+)?), $foreground_color as u8, $background_color as u8);
-    }
-}
-
-#[allow(dead_code)]
-pub enum ANSICON {
-    Reset = 0,
-    Bold = 1,
-    Underline = 4,
-    Blink = 5,
-    Reverse = 7,
-    FgBlack = 30,
-    FgRed = 31,
-    FgGreen = 32,
-    FgYellow = 33,
-    FgBlue = 34,
-    FgMagenta = 35,
-    FgCyan = 36,
-    FgWhite = 37,
-    FgDefault = 39,
-    FgLightGray = 90,
-    FgLightRed = 91,
-    FgLightGreen = 92,
-    FgLightYellow = 93,
-    FgLightBlue = 94,
-    FgLightMagenta = 95,
-    FgLightCyan = 96,
-    FgLightWhite = 97,
-    BgBlack = 40,
-    BgRed = 41,
-    BgGreen = 42,
-    BgYellow = 43,
-    BgBlue = 44,
-    BgMagenta = 45,
-    BgCyan = 46,
-    BgWhite = 47,
-    BgDefault = 49,
-    BgLightGray = 100,
-    BgLightRed = 101,
-    BgLightGreen = 102,
-    BgLightYellow = 103,
-    BgLightBlue = 104,
-    BgLightMagenta = 105,
-    BgLightCyan = 106,
-    BgLightWhite = 107,
-}
-
-impl From<ANSICON> for u8 {
-    fn from(con: ANSICON) -> Self {
-        con as Self
+macro_rules! eprintln {
+        () => ($crate::eprint!("\n"));
+    ($($arg:tt)*) => {
+        $crate::console::error_print(core::format_args!($($arg)*));
+        $crate::eprintln!();
     }
 }

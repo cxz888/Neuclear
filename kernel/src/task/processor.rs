@@ -53,9 +53,9 @@ pub fn run_tasks() -> ! {
     loop {
         let task = fetch_task().expect("No more tasks avaliable.");
         let mut processor = PROCESSOR.exclusive_access();
-        log::info!("next task pid: {:?}", task.process.upgrade().unwrap().pid);
+        // log::info!("next task pid: {:?}", task.process.upgrade().unwrap().pid);
         let mut task_inner = task.inner();
-        log::info!("next task ctx: {:x?}", task_inner.task_ctx);
+        // log::info!("next task ctx: {:x?}", task_inner.task_ctx);
         let next_task_ctx_ptr = &task_inner.task_ctx as *const TaskContext;
         task_inner.thread_status = ThreadStatus::Running;
         drop(task_inner);

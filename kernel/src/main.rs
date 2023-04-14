@@ -44,8 +44,8 @@ fn clear_bss() {
 pub fn rust_main() -> ! {
     clear_bss();
     logging::init();
-    println!("[kernel] Hello, world!");
     memory::init();
+    println!("[kernel] Hello, world!");
     // 允许在内核态下访问用户数据
     unsafe { sstatus::set_sum() };
     trap::init();

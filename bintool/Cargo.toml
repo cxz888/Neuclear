@@ -6,5 +6,5 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-fatfs = { path = "../rust-fatfs" }
+fatfs = { path = "../deps/rust-fatfs" }
 xmas-elf = "0.9"

@@ -2,6 +2,7 @@
 
 use super::id::ThreadUserRes;
 use super::{kstack_alloc, KernelStack, ProcessControlBlock, TaskContext};
+use crate::memory::kernel_ppn_to_vpn;
 use crate::signal::SignalReceiver;
 use crate::trap::TrapContext;
 use crate::{memory::PhysPageNum, sync::UPSafeCell};
@@ -42,7 +43,7 @@ pub struct ThreadControlBlockInner {
 impl ThreadControlBlockInner {
     /// TCB 的 trap_ctx_ppn 在正常情况下都是合法的，所以 safe
     pub fn trap_ctx(&mut self) -> &'static mut TrapContext {
-        unsafe { self.trap_ctx_ppn.page_start().as_mut() }
+        unsafe { kernel_ppn_to_vpn(self.trap_ctx_ppn).page_start().as_mut() }
     }
 
     #[allow(unused)]

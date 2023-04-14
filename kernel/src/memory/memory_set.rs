@@ -1,10 +1,14 @@
 //! Implementation of [`MapArea`] and [`MemorySet`].
 
 use super::{
-    frame_alloc, FrameTracker, PTEFlags, PageTable, PhysAddr, PhysPageNum, VirtAddr, VirtPageNum,
+    frame_alloc, kernel_ppn_to_vpn, FrameTracker, PTEFlags, PageTable, PhysAddr, PhysPageNum,
+    VirtAddr, VirtPageNum,
 };
 use crate::{
-    config::{MEMORY_END, MMIO, PAGE_SIZE, PAGE_SIZE_BITS, SECOND_START, TRAMPOLINE},
+    config::{
+        LOW_END, MEMORY_END, MMAP_START, MMIO, PAGE_SIZE, PAGE_SIZE_BITS, PA_TO_VA, TRAMPOLINE,
+    },
+    memory::kernel_va_to_pa,
     sync::UPSafeCell,
     syscall::MmapProt,
     utils::error::{code, Result},
@@ -12,7 +16,7 @@ use crate::{
 
 use alloc::{collections::BTreeMap, sync::Arc};
 use bitflags::bitflags;
-use core::{assert_matches::assert_matches, ops::Range};
+use core::{assert_matches::assert_matches, mem, ops::Range};
 use lazy_static::*;
 use riscv::register::satp;
 
@@ -60,7 +64,8 @@ impl MemorySet {
     pub fn new_kernel() -> Self {
         let mut memory_set = Self::new_bare();
         // map trampoline
-        memory_set.map_trampoline();
+        // memory_set.map_trampoline();
+
         // map kernel sections
         log::info!(".text [{:#x}, {:#x})", stext as usize, etext as usize);
         log::info!(".rodata [{:#x}, {:#x})", srodata as usize, erodata as usize);
@@ -70,12 +75,17 @@ impl MemorySet {
             sbss_with_stack as usize,
             ebss as usize
         );
+        log::info!(
+            "physical memory [{:#x}, {:#x})",
+            ekernel as usize,
+            MEMORY_END + PA_TO_VA
+        );
+
         log::info!("mapping .text section");
         memory_set.push(
-            MapArea::new(
-                VirtAddr(stext as usize),
-                VirtAddr(etext as usize),
-                MapType::Identical,
+            MapArea::kernel_map(
+                kernel_va_to_pa(VirtAddr(stext as usize)),
+                kernel_va_to_pa(VirtAddr(etext as usize)),
                 MapPermission::R | MapPermission::X,
             ),
             0,
@@ -85,10 +95,9 @@ impl MemorySet {
         // 新版本则独立开来了，参考 https://stackoverflow.com/questions/44938745/rodata-section-loaded-in-executable-page
         log::info!("mapping .rodata section");
         memory_set.push(
-            MapArea::new(
-                VirtAddr(srodata as usize),
-                VirtAddr(erodata as usize),
-                MapType::Identical,
+            MapArea::kernel_map(
+                kernel_va_to_pa(VirtAddr(srodata as usize)),
+                kernel_va_to_pa(VirtAddr(erodata as usize)),
                 MapPermission::R,
             ),
             0,
@@ -97,10 +106,9 @@ impl MemorySet {
         // .data 段和 .bss 段的访问限制相同，所以可以放到一起
         log::info!("mapping .data and .bss section");
         memory_set.push(
-            MapArea::new(
-                VirtAddr(sdata as usize),
-                VirtAddr(ebss as usize),
-                MapType::Identical,
+            MapArea::kernel_map(
+                kernel_va_to_pa(VirtAddr(sdata as usize)),
+                kernel_va_to_pa(VirtAddr(ebss as usize)),
                 MapPermission::R | MapPermission::W,
             ),
             0,
@@ -108,22 +116,22 @@ impl MemorySet {
         );
         log::info!("mapping physical memory");
         memory_set.push(
-            MapArea::new(
-                VirtAddr(ekernel as usize),
-                VirtAddr(MEMORY_END),
-                MapType::Identical,
+            MapArea::kernel_map(
+                kernel_va_to_pa(VirtAddr(ekernel as usize)),
+                PhysAddr(MEMORY_END),
                 MapPermission::R | MapPermission::W,
             ),
             0,
             None,
         );
+
+        // MMIO 映射，物理地址 0x1000_1000，虚拟地址 0xFFFF_FFFF_1000_1000
         log::info!("mapping memory-mapped registers");
         for &(start, len) in MMIO {
             memory_set.push(
-                MapArea::new(
-                    VirtAddr(start),
-                    VirtAddr(start + len),
-                    MapType::Identical,
+                MapArea::kernel_map(
+                    PhysAddr(start),
+                    PhysAddr(start + len),
                     MapPermission::R | MapPermission::W,
                 ),
                 0,
@@ -147,9 +155,9 @@ impl MemorySet {
                 let src_ppn = user_space.translate(vpn).unwrap();
                 let mut dst_ppn = memory_set.translate(vpn).unwrap();
                 unsafe {
-                    dst_ppn
+                    kernel_ppn_to_vpn(dst_ppn)
                         .as_page_bytes_mut()
-                        .copy_from_slice(src_ppn.as_page_bytes());
+                        .copy_from_slice(kernel_ppn_to_vpn(src_ppn).as_page_bytes());
                 }
             }
         }
@@ -186,20 +194,23 @@ impl MemorySet {
         perm: MapPermission,
         fixed: bool,
     ) -> Result<isize> {
-        // TODO: 这里，如果是位置固定的映射，那么应当 unmap 与其相交的部分
+        log::error!("MMap");
         log::debug!("perm: {perm:?}");
         if fixed {
+            // TODO: 应当 unmap 与其相交的部分。不过，如果是一些不该 unmap 的区域，是否该返回错误？
             log::error!("should unmap intersecting part");
             self.insert_framed_area(vpn_range.start, vpn_range.end, perm);
             Ok(vpn_range.start.0 as isize)
         } else {
-            // 尝试在高地址空间找到一个合适的段来映射
-            let mut start = VirtPageNum((SECOND_START) >> PAGE_SIZE_BITS);
+            // 尝试找到一个合适的段来映射
+            let mut start = VirtPageNum(MMAP_START >> PAGE_SIZE_BITS);
             let len = vpn_range.end.0 - vpn_range.start.0;
             for area in self.areas.values() {
-                // 高地址空间，但同时要控制住不溢出
-                if area.vpn_range.start > start && start < VirtPageNum(TRAMPOLINE >> PAGE_SIZE_BITS)
+                // 要控制住不溢出低地址空间的上限
+                if area.vpn_range.start > start
+                    && start.add(len) <= VirtPageNum(LOW_END >> PAGE_SIZE_BITS)
                 {
+                    // 找到可映射的段
                     if start.add(len) <= area.vpn_range.start {
                         // TODO: 匿名映射的话，按照约定应当全部初始化为 0
                         self.insert_framed_area(start, start.add(len), perm);
@@ -235,7 +246,7 @@ impl MemorySet {
             area.unmap(&mut self.page_table);
         }
     }
-
+    /// `start_offset` 是数据在页中开始的偏移
     pub fn push(&mut self, mut map_area: MapArea, start_offset: usize, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
@@ -273,8 +284,9 @@ impl MemorySet {
 /// 描述逻辑段内所有虚拟页映射到物理页的方式
 #[derive(Debug, Clone)]
 pub enum MapType {
-    /// 恒等映射，或者说直接以物理地址访问
-    Identical,
+    /// 线性映射，即物理地址到虚地址有一个固定的 offset。
+    /// 内核中这个量是 PA_TO_VA 即 0xFFFF_FFFF_0000_0000
+    Linear { offset: usize },
     /// 需要分配物理页帧
     Framed {
         /// 这些保存的物理页帧用于存放实际的内存数据
@@ -315,6 +327,16 @@ impl MapArea {
             map_perm,
         }
     }
+    /// 内核中采取的线性映射
+    pub fn kernel_map(start_pa: PhysAddr, end_pa: PhysAddr, map_perm: MapPermission) -> Self {
+        let start_vpn = VirtAddr(start_pa.0 + PA_TO_VA).vpn_floor();
+        let end_vpn = VirtAddr(end_pa.0 + PA_TO_VA).vpn_ceil();
+        Self {
+            vpn_range: start_vpn..end_vpn,
+            map_type: MapType::Linear { offset: PA_TO_VA },
+            map_perm,
+        }
+    }
     pub fn from_another(another: &MapArea) -> Self {
         Self {
             vpn_range: another.vpn_range.clone(),
@@ -328,8 +350,8 @@ impl MapArea {
     pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         let ppn;
         match &mut self.map_type {
-            MapType::Identical => {
-                ppn = PhysPageNum(vpn.0);
+            MapType::Linear { offset } => {
+                ppn = PhysPageNum(vpn.0 - *offset / PAGE_SIZE);
             }
             MapType::Framed { data_frames } => {
                 let frame = frame_alloc().unwrap();
@@ -386,16 +408,14 @@ impl MapArea {
         log::debug!("rest: {:#x}", rest.len());
 
         unsafe {
-            page_table
-                .translate(curr_vpn)
-                .unwrap()
+            kernel_ppn_to_vpn(page_table.translate(curr_vpn).unwrap())
                 .copy_from(start_offset, first_block);
 
             curr_vpn.0 += 1;
 
             for chunk in rest.chunks(PAGE_SIZE) {
                 let mut dst = page_table.translate(curr_vpn).unwrap();
-                dst.copy_from(0, chunk);
+                kernel_ppn_to_vpn(dst).copy_from(0, chunk);
                 curr_vpn.0 += 1;
             }
         }
