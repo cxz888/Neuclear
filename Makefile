@@ -28,11 +28,16 @@ $(KERNEL_BIN): kernel
 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $@
 
 kernel:
-	@cd kernel && cargo build --release
+	@cd kernel && cargo build --package major --release
 
 clean:
 	@cd kernel && cargo clean
 	@cd user && make clean
+
+asm:
+	@cp $(KERNEL_ELF) bintool/res/kernel
+	@cp $(KERNEL_ELF).d bintool/res/kernel.d
+	cd bintool/res && rust-objdump --arch-name=riscv64 kernel -S --section=.data --section=.bss --section=.text > kernel.asm
 
 run: build
 	@qemu-system-riscv64 \

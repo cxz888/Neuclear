@@ -1,0 +1,16 @@
+[package]
+name = "filesystem"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bitflags = { workspace = true }
+lazy_static = { workspace = true }
+
+memory = { path = "../memory" }
+utils = { path = "../utils" }
+drivers = { path = "../drivers" }
+fat32 = { path = "../fat32" }
+vfs = { path = "../vfs" }

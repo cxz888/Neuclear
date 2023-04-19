@@ -112,25 +112,6 @@ pub struct SyscallInfo {
     pub times: usize,
 }
 
-const MAX_SYSCALL_NUM: usize = 500;
-
-#[derive(Debug)]
-pub struct TaskInfo {
-    pub status: TaskStatus,
-    pub syscall_times: [u32; MAX_SYSCALL_NUM],
-    pub time: usize,
-}
-
-impl TaskInfo {
-    pub fn new() -> Self {
-        TaskInfo {
-            status: TaskStatus::UnInit,
-            syscall_times: [0; MAX_SYSCALL_NUM],
-            time: 0,
-        }
-    }
-}
-
 #[repr(C)]
 #[derive(Debug)]
 pub struct Stat {
@@ -251,7 +232,7 @@ pub fn set_priority(prio: isize) -> isize {
 pub fn wait(exit_code: &mut i32) -> isize {
     loop {
         match sys_waitpid(-1, exit_code as *mut _) {
-            -11 => {
+            0 => {
                 sys_yield();
             }
             n => {
@@ -303,13 +284,6 @@ pub fn pipe(pipe_fd: &mut [usize]) -> isize {
     sys_pipe(pipe_fd)
 }
 
-pub fn task_info(info: &TaskInfo) -> isize {
-    sys_task_info(info)
-}
-
-pub fn thread_create(entry: usize, arg: usize) -> isize {
-    sys_thread_create(entry, arg)
-}
 pub fn gettid() -> isize {
     sys_gettid()
 }
@@ -322,38 +296,4 @@ pub fn waittid(tid: usize) -> isize {
             exit_code => return exit_code,
         }
     }
-}
-
-pub fn mutex_create() -> isize {
-    sys_mutex_create(false)
-}
-pub fn mutex_blocking_create() -> isize {
-    sys_mutex_create(true)
-}
-pub fn mutex_lock(mutex_id: usize) -> isize {
-    sys_mutex_lock(mutex_id)
-}
-pub fn mutex_unlock(mutex_id: usize) {
-    sys_mutex_unlock(mutex_id);
-}
-pub fn semaphore_create(res_count: usize) -> isize {
-    sys_semaphore_create(res_count)
-}
-pub fn semaphore_up(sem_id: usize) {
-    sys_semaphore_up(sem_id);
-}
-pub fn enable_deadlock_detect(enabled: bool) -> isize {
-    sys_enable_deadlock_detect(enabled as usize)
-}
-pub fn semaphore_down(sem_id: usize) -> isize {
-    sys_semaphore_down(sem_id)
-}
-pub fn condvar_create() -> isize {
-    sys_condvar_create(0)
-}
-pub fn condvar_signal(condvar_id: usize) {
-    sys_condvar_signal(condvar_id);
-}
-pub fn condvar_wait(condvar_id: usize, mutex_id: usize) {
-    sys_condvar_wait(condvar_id, mutex_id);
 }

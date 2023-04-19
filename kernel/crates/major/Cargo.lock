@@ -12,12 +12,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "autocfg"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
-
-[[package]]
 name = "bare-metal"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -28,9 +22,9 @@ dependencies = [
 
 [[package]]
 name = "bit_field"
-version = "0.10.2"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc827186963e592360843fb5ba4b973e145841266c1357f7180c43526f2e5b61"
+checksum = "dcb6dd1c2376d2e096796e234a70e17e94cc2d5d54ff8ce42b28cef1d0d359a4"
 
 [[package]]
 name = "bitflags"
@@ -39,18 +33,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
-name = "bitflags"
-version = "2.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c70beb79cbb5ce9c4f8e20849978f34225931f665bb49efa6982875a4d5facb3"
-
-[[package]]
 name = "buddy_system_allocator"
-version = "0.9.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43f9365b6b0c9e1663ca4ca9440c00eda46bc85a3407070be8b5e0d8d1f29629"
+checksum = "b4e85e760e105b46ae0bd1236578793c6c147ae7463fe95c8350296b8bfcb830"
 dependencies = [
- "spin 0.9.8",
+ "spin 0.7.1",
 ]
 
 [[package]]
@@ -65,10 +53,7 @@ version = "0.1.0"
 dependencies = [
  "lazy_static",
  "log",
- "memory",
- "spin 0.9.8",
- "utils",
- "virtio-drivers",
+ "spin 0.9.4",
 ]
 
 [[package]]
@@ -77,7 +62,7 @@ version = "0.1.0"
 dependencies = [
  "drivers",
  "fatfs",
- "spin 0.9.8",
+ "spin 0.9.4",
  "vfs",
 ]
 
@@ -85,32 +70,38 @@ dependencies = [
 name = "fatfs"
 version = "0.4.0"
 dependencies = [
- "bitflags 1.3.2",
+ "bitflags",
  "log",
-]
-
-[[package]]
-name = "filesystem"
-version = "0.1.0"
-dependencies = [
- "bitflags 2.1.0",
- "drivers",
- "fat32",
- "lazy_static",
- "memory",
- "utils",
- "vfs",
 ]
 
 [[package]]
 name = "goblin"
-version = "0.6.1"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d6b4de4a8eb6c46a8c77e1d3be942cb9a8bf073c22374578e5ba4b08ed0ff68"
+checksum = "572564d6cba7d09775202c8e7eebc4d534d5ae36578ab402fb21e182a0ac9505"
 dependencies = [
  "log",
  "plain",
  "scroll",
+]
+
+[[package]]
+name = "kernel"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "buddy_system_allocator",
+ "drivers",
+ "fat32",
+ "goblin",
+ "lazy_static",
+ "lock_api",
+ "log",
+ "num_enum",
+ "riscv",
+ "spin 0.9.4",
+ "vfs",
+ "virtio-drivers",
 ]
 
 [[package]]
@@ -124,11 +115,10 @@ dependencies = [
 
 [[package]]
 name = "lock_api"
-version = "0.4.9"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "435011366fe56583b16cf956f9df0095b405b82d76425bc8981c0e22e60ec4df"
+checksum = "88943dd7ef4a2e5a4bfa2753aaab3013e34ce2533d1996fb18ef591e315e2b3b"
 dependencies = [
- "autocfg",
  "scopeguard",
 ]
 
@@ -142,58 +132,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "major"
-version = "0.1.0"
-dependencies = [
- "bitflags 2.1.0",
- "drivers",
- "fat32",
- "filesystem",
- "goblin",
- "lazy_static",
- "lock_api",
- "log",
- "memory",
- "num_enum",
- "riscv",
- "signal",
- "spin 0.9.8",
- "utils",
- "vfs",
-]
-
-[[package]]
 name = "memchr"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2dffe52ecf27772e601905b7522cb4ef790d2cc203488bbd0e2fe85fcb74566d"
 
 [[package]]
-name = "memory"
-version = "0.1.0"
-dependencies = [
- "bitflags 2.1.0",
- "buddy_system_allocator",
- "lazy_static",
- "log",
- "riscv",
- "utils",
-]
-
-[[package]]
 name = "num_enum"
-version = "0.5.11"
+version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f646caf906c20226733ed5b1374287eb97e3c2a5c227ce668c1f2ce20ae57c9"
+checksum = "cf5395665662ef45796a4ff5486c5d41d29e0c09640af4c5f17fd94ee2c119c9"
 dependencies = [
  "num_enum_derive",
 ]
 
 [[package]]
 name = "num_enum_derive"
-version = "0.5.11"
+version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcbff9bc912032c62bf65ef1d5aea88983b420f4f839db1e9b0c281a25c9c799"
+checksum = "3b0498641e53dd6ac1a4f22547548caa6864cc4933784319cd1775271c5a46ce"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -208,27 +165,27 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.56"
+version = "1.0.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b63bdb0cd06f1f4dedf69b254734f9b45af66e4a031e42a7480257d9898b435"
+checksum = "57a8eca9f9c4ffde41714334dee777596264c7825420f521abc92b5b5deb63a5"
 dependencies = [
  "unicode-ident",
 ]
 
 [[package]]
 name = "quote"
-version = "1.0.26"
+version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4424af4bf778aae2051a77b60283332f386554255d722233d09fbfc7e30da2fc"
+checksum = "8856d8364d252a14d474036ea1358d63c9e6965c8e5c1885c18f73d70bff9c7b"
 dependencies = [
  "proc-macro2",
 ]
 
 [[package]]
 name = "regex"
-version = "1.7.3"
+version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b1f693b24f6ac912f4893ef08244d70b6067480d2f1a46e950c9691e6749d1d"
+checksum = "e076559ef8e241f2ae3479e36f97bd5741c0330689e217ad51ce2c76808b868a"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -237,9 +194,9 @@ dependencies = [
 
 [[package]]
 name = "regex-syntax"
-version = "0.6.29"
+version = "0.6.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f162c6dd7b008981e4d40210aca20b4bd0f9b60ca9271061b07f78537722f2e1"
+checksum = "456c603be3e8d448b072f410900c09faf164fbce2d480456f50eea6e25f9c848"
 
 [[package]]
 name = "riscv"
@@ -248,7 +205,7 @@ source = "git+https://github.com/rcore-os/riscv#11d43cf7cccb3b62a3caaf3e07a1db74
 dependencies = [
  "bare-metal",
  "bit_field",
- "bitflags 1.3.2",
+ "bitflags",
  "log",
  "riscv-target",
 ]
@@ -314,15 +271,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
 
 [[package]]
-name = "signal"
-version = "0.1.0"
-dependencies = [
- "bitflags 2.1.0",
- "num_enum",
- "utils",
-]
-
-[[package]]
 name = "spin"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -330,18 +278,24 @@ checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
 name = "spin"
-version = "0.9.8"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+checksum = "13287b4da9d1207a4f4929ac390916d64eacfe236a487e9a9f5b3be392be5162"
+
+[[package]]
+name = "spin"
+version = "0.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f6002a767bff9e83f8eeecf883ecb8011875a21ae8da43bffb817a57e78cc09"
 dependencies = [
  "lock_api",
 ]
 
 [[package]]
 name = "syn"
-version = "1.0.109"
+version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
+checksum = "1f4064b5b16e03ae50984a5a8ed5d4f8803e6bc1fd170a3cda91a1be4b18e3f5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -350,23 +304,15 @@ dependencies = [
 
 [[package]]
 name = "unicode-ident"
-version = "1.0.8"
+version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5464a87b239f13a63a501f2701565754bae92d243d4bb7eb12f6d57d2269bf4"
-
-[[package]]
-name = "utils"
-version = "0.1.0"
-dependencies = [
- "log",
- "riscv",
-]
+checksum = "84a22b9f218b40614adcb3f4ff08b703773ad44fa9423e4e0d346d5db86e4ebc"
 
 [[package]]
 name = "vfs"
 version = "0.1.0"
 dependencies = [
- "spin 0.9.8",
+ "spin 0.9.4",
 ]
 
 [[package]]
@@ -374,7 +320,7 @@ name = "virtio-drivers"
 version = "0.1.0"
 source = "git+https://github.com/rcore-os/virtio-drivers?rev=93f821c#93f821cf2ce44881d764603d7f744f8e8696d27c"
 dependencies = [
- "bitflags 1.3.2",
+ "bitflags",
  "log",
  "volatile",
 ]

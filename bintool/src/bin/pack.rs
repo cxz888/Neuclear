@@ -15,17 +15,17 @@ fn main() {
     let fs = FileSystem::new(fs, FsOptions::new()).unwrap();
     let root_dir = fs.root_dir();
 
-    let initproc = std::fs::read(format!("{PREFIX}/initproc")).unwrap();
+    let initproc = std::fs::read(format!("{PREFIX}/initproc.elf")).unwrap();
     let mut file = root_dir.create_file("initproc").unwrap();
     file.truncate().unwrap();
     file.write_all(&initproc).unwrap();
 
-    let shell = std::fs::read(format!("{PREFIX}/shell")).unwrap();
+    let shell = std::fs::read(format!("{PREFIX}/shell.elf")).unwrap();
     file = root_dir.create_file("shell").unwrap();
     file.truncate().unwrap();
     file.write_all(&shell).unwrap();
 
-    let shell = std::fs::read(format!("{PREFIX}/echo")).unwrap();
+    let shell = std::fs::read(format!("{PREFIX}/echo.elf")).unwrap();
     file = root_dir.create_file("echo").unwrap();
     file.truncate().unwrap();
     file.write_all(&shell).unwrap();
