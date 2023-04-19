@@ -6,6 +6,16 @@
 
 由于开发人员都来自东北大学 (Neu)，因此化用为 Neuclear 作为队伍名称与系统名称
 
+## VSCode 扩展建议
+
+- Even Better TOML
+- crates
+- Error Lens
+- C/C++（调试用）
+- RISC-V Support
+- rust-analyzer
+- AutoCorrect（请尽量注意中英文之间加空格隔开，该扩展就是自动做这个的）
+
 ## 可以参考的资料
 
 <https://gitee.com/LoanCold/ultraos_backup>
