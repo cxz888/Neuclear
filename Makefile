@@ -22,13 +22,13 @@ GDB ?= riscv64-unknown-elf-gdb
 .PHONY: env kernel build clean asm all
 
 env:
-	# (rustup target list | grep "riscv64imac-unknown-none-elf (installed)") || rustup target add $(TARGET)
-	# cargo install cargo-binutils
+
 
 kernel:
 ifeq ($(MODE), test)
+	@rm -rf kernel/.cargo
 	@cp -r kernel/cargo-config kernel/.cargo
-	@cd kernel && cargo build --package major --release --features test
+	@cd kernel && cargo build --package major --release --features test --offline
 else
 	@cd kernel && cargo build --package major --release
 endif

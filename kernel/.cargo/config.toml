@@ -6,3 +6,12 @@ target-dir = "target"
 [target.riscv64imac-unknown-none-elf]
 rustflags = ["-Clink-arg=-Tlinker.ld"]
 
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/rcore-os/riscv"]
+git = "https://github.com/rcore-os/riscv"
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
