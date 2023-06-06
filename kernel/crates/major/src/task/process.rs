@@ -128,9 +128,9 @@ impl ProcessControlBlock {
     }
 
     // TODO: 这个不是正确实现的，注意
-    pub fn _spawn(self: &Arc<Self>, name: String) -> isize {
+    pub fn _spawn(self: &Arc<Self>, name: String) -> Result<isize> {
         // TODO: PCB::new() 这个接口似乎可以废除，加上一个加载 elf 的接口
-        let child = Self::from_path(name.clone(), vec![name]).unwrap();
+        let child = Self::from_path(name.clone(), vec![name])?;
         let mut parent_inner = self.inner();
         parent_inner.children.push(Arc::clone(&child));
 
@@ -139,7 +139,7 @@ impl ProcessControlBlock {
         child_inner.parent = Arc::downgrade(self);
         add_task(child_inner.main_thread());
 
-        child.pid.0 as isize
+        Ok(child.pid.0 as isize)
     }
 
     #[inline]

@@ -19,7 +19,7 @@ use goblin::elf::{
 };
 use memory::{MapArea, MapPermission, MapType, MemorySet, PageTable, VirtAddr};
 use utils::config::PAGE_SIZE;
-use utils::error::Result;
+use utils::error::{code, Result};
 
 // PH 相关和 Entry 应该是用于动态链接的，交由所谓 interpreter 解析
 // PH 的起始地址
@@ -56,8 +56,10 @@ impl Loader {
 
         // 读取和解析 ELF 内容
         let app_inode = open_inode(path, OpenFlags::O_RDONLY)?;
-        let elf_data = app_inode.read_all();
-        let elf = Elf::parse(&elf_data).expect("should be valid elf");
+
+        let elf_data = app_inode.read_all().map_err(|_| code::ENOEXEC)?;
+
+        let elf = Elf::parse(&elf_data).map_err(|_| code::ENOEXEC)?;
 
         pcb.memory_set.recycle_user_pages();
         // 清空信号模块

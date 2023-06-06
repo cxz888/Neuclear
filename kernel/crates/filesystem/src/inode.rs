@@ -42,9 +42,9 @@ impl InodeFile {
         }
     }
     /// Read all data inside a inode into vector
-    pub fn read_all(&self) -> Vec<u8> {
+    pub fn read_all(&self) -> Result<Vec<u8>> {
         let mut inner = self.inner.exclusive_access();
-        inner.entry.read_all().unwrap()
+        inner.entry.read_all().map_err(|_| code::EISDIR)
     }
 }
 

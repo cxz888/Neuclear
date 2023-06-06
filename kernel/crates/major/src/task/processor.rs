@@ -58,19 +58,17 @@ pub fn run_tasks() -> ! {
         let task = if let Some(existed_task) = fetch_task() {
             existed_task
         } else {
-            let mut app_name = super::ALL_APPS
-                .exclusive_access()
-                .pop()
-                .expect("No more tasks available.");
-            while app_name.contains('.') {
-                app_name = super::ALL_APPS
+            loop {
+                let mut app_name = super::ALL_APPS
                     .exclusive_access()
                     .pop()
                     .expect("No more tasks available.");
+                log::info!("next app: {app_name}");
+                if super::INITPROC._spawn(app_name).is_ok() {
+                    break;
+                }
             }
-            log::info!("next app: {app_name}");
-            // let app = super::INITPROC.fork();
-            super::INITPROC._spawn(app_name);
+
             fetch_task().unwrap()
         };
         // 非初赛测试情况下，没有任务就可以退出操作系统了

@@ -121,7 +121,9 @@ impl ThreadUserRes {
 
     /// 释放用户资源
     fn dealloc_user_res(&self) {
-        let process = self.process.upgrade().unwrap();
+        let Some(process) = self.process.upgrade() else {
+            return;
+        };
         let mut inner = process.inner();
         // 手动取消用户栈的映射
         let user_stack_low_addr = VirtAddr(self.user_stack_low_addr());
@@ -132,9 +134,10 @@ impl ThreadUserRes {
 
     /// 释放用户线程的 tid
     pub fn dealloc_tid(&self) {
-        let process = self.process.upgrade().unwrap();
-        let mut process_inner = process.inner();
-        process_inner.dealloc_tid(self.tid);
+        if let Some(process) = self.process.upgrade() {
+            let mut process_inner = process.inner();
+            process_inner.dealloc_tid(self.tid);
+        }
     }
 
     /// 获取当前线程用户栈的低地址，即高地址减去用户栈大小
