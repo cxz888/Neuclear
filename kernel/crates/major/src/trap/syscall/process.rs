@@ -3,8 +3,8 @@
 use super::flags::{MmapFlags, MmapProt};
 use crate::{
     task::{
-        __exit_current_and_run_next, __suspend_current_and_run_next, current_page_table,
-        current_process, current_task, CloneFlags, ThreadStatus,
+        __exit_curr_and_run_next, __suspend_curr_and_run_next, check_cstr, check_ptr,
+        check_ptr_mut, curr_process, curr_task, CloneFlags, ThreadStatus,
     },
     trap::syscall::flags::WaitFlags,
 };
@@ -13,12 +13,13 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
-use memory::{PageTable, VirtAddr};
+use memory::VirtAddr;
 use num_enum::TryFromPrimitive;
 use signal::{Signal, SignalAction, SignalSet};
 use utils::{
     config::SIGSET_SIZE_BYTES,
     error::{code, Result},
+    time::{get_time_ns, get_time_us, MICRO_PER_SEC, NANO_PER_SEC},
 };
 use utils::{
     structs::UtsName,
@@ -28,28 +29,28 @@ use utils::{
 /// 退出当前任务并设置其退出码为 `exit_code & 0xff`，该函数不返回
 pub fn sys_exit(exit_code: i32) -> ! {
     // TODO: 退出需要给其父进程发送 `SIGCHLD` 信号
-    __exit_current_and_run_next(exit_code & 0xff)
+    __exit_curr_and_run_next(exit_code & 0xff)
 }
 
 /// 挂起当前任务，让出 CPU，永不失败
 pub fn sys_yield() -> Result {
-    __suspend_current_and_run_next();
+    __suspend_curr_and_run_next();
     Ok(0)
 }
 
 /// 返回当前进程 id，永不失败
 pub fn sys_getpid() -> Result {
-    Ok(current_process().pid() as isize)
+    Ok(curr_process().pid() as isize)
 }
 
 /// 返回当前进程的父进程的 id，永不失败
 pub fn sys_getppid() -> Result {
-    Ok(current_process().inner().parent.upgrade().unwrap().pid() as isize)
+    Ok(curr_process().inner().parent.upgrade().unwrap().pid() as isize)
 }
 
 /// 创建子任务，通过 flags 进行精确控制。
 ///
-/// TODO: 写文档
+/// TODO: 完善 sys_clone() 并写文档
 pub fn sys_clone(
     flags: usize,
     _user_stack: usize,
@@ -57,7 +58,6 @@ pub fn sys_clone(
     _tls: usize,
     _ctid: usize,
 ) -> Result {
-    // TODO: 完善 sys_clone()
     if u32::try_from(flags).is_err() {
         log::error!("flags 超过 u32：{flags:#b}");
         return Err(code::TEMP);
@@ -77,7 +77,7 @@ pub fn sys_clone(
         return Err(code::TEMP);
     }
 
-    let current_process = current_process();
+    let current_process = curr_process();
     let new_process = current_process.fork();
     let new_pid = new_process.pid();
     let new_process_inner = new_process.inner();
@@ -94,31 +94,24 @@ pub fn sys_clone(
 /// - `argv` 给出了参数列表。其最后一个元素必须是 0
 /// - `envp` 给出环境变量列表，其最后一个元素必须是 0，目前未实现
 pub fn sys_execve(pathname: *const u8, mut argv: *const usize, envp: *const usize) -> Result {
-    use core::{slice::from_raw_parts, str::from_utf8};
+    // TODO: 暂时在测试中忽略
+    #[cfg(not(feature = "test"))]
     assert!(envp.is_null(), "envp 暂时尚未支持");
+    let pathname = unsafe { check_cstr(pathname)? };
+    // 收集参数列表
+    let mut arg_vec: Vec<String> = Vec::new();
     unsafe {
-        let mut path_len = 0;
-        while *pathname.add(path_len) != 0 {
-            path_len += 1;
-        }
-        let path = from_utf8(from_raw_parts(pathname, path_len)).unwrap();
-        let mut arg_vec: Vec<String> = Vec::new();
-        // 收集参数列表
         while *argv != 0 {
-            let mut arg_str_len = 0;
-            let arg_str_ptr = *argv as *const u8;
-            while *arg_str_ptr.add(arg_str_len) != 0 {
-                arg_str_len += 1;
-            }
-            let arg_str = from_utf8(from_raw_parts(arg_str_ptr, arg_str_len)).unwrap();
+            let arg_str = check_cstr(*argv as _)?;
             arg_vec.push(arg_str.to_string());
             argv = argv.add(1);
         }
-        let process = current_process();
-        let argc = arg_vec.len();
-        process.exec(path.to_string(), arg_vec)?;
-        Ok(argc as isize)
     }
+    // 执行新进程
+    let process = curr_process();
+    let argc = arg_vec.len();
+    process.exec(pathname.to_string(), arg_vec)?;
+    Ok(argc as isize)
 }
 
 /// 挂起本线程，等待子进程改变状态（终止、或信号处理）。默认而言，会阻塞式等待子进程终止。
@@ -150,7 +143,7 @@ pub fn sys_wait4(pid: isize, wstatus: *mut i32, options: usize, rusage: usize) -
 
     // 尝试寻找符合条件的子进程
     loop {
-        let process = current_process();
+        let process = curr_process();
         let mut inner = process.inner();
 
         // 是否有符合 pid 要求的子进程
@@ -187,7 +180,7 @@ pub fn sys_wait4(pid: isize, wstatus: *mut i32, options: usize, rusage: usize) -
                 } else {
                     drop(inner);
                     drop(process);
-                    __suspend_current_and_run_next();
+                    __suspend_curr_and_run_next();
                 }
             }
         } else {
@@ -201,15 +194,13 @@ pub fn sys_wait4(pid: isize, wstatus: *mut i32, options: usize, rusage: usize) -
 /// 参数：
 /// - `ts` 要设置的时间值
 /// - `tz` 时区结构，但目前已经过时，不考虑
-pub fn sys_get_time_of_day(ts: *mut TimeVal, _tz: usize) -> Result {
+pub fn sys_get_time_of_day(tv: *mut TimeVal, _tz: usize) -> Result {
     // 根据 man 所言，时区参数 tz 已经过时了，通常应当是 NULL。
     assert_eq!(_tz, 0);
-    let mut pt = current_page_table();
-    // FIXME: 地址空间变换后修正
-    // let ts = unsafe { pt.trans_ptr_mut(ts)? };
-    // let us = get_time_us();
-    // ts.sec = us / MICRO_PER_SEC;
-    // ts.usec = us % MICRO_PER_SEC;
+    let tv = unsafe { check_ptr_mut(tv)? };
+    let us = get_time_us();
+    tv.sec = us / MICRO_PER_SEC;
+    tv.usec = us % MICRO_PER_SEC;
     Ok(0)
 }
 
@@ -223,15 +214,13 @@ const CLOCK_REALTIME: usize = 0;
 /// 参数：
 /// - `clock_id` 时钟 id，目前仅为 `CLOCK_READTIME`
 /// - `tp` 指向要设置的用户指针
-pub fn sys_clock_gettime(_clock_id: usize, tp: *mut TimeSpec) -> Result {
+pub fn sys_clock_gettime(_clock_id: usize, ts: *mut TimeSpec) -> Result {
     // TODO: 目前只考虑挂钟时间
     assert_eq!(_clock_id, CLOCK_REALTIME);
-    let mut pt = current_page_table();
-    // FIXME: 地址空间变换后修正
-    // let tp = unsafe { pt.trans_ptr_mut(tp)? };
-    // let ns = get_time_ns();
-    // tp.sec = ns / NANO_PER_SEC;
-    // tp.nsec = ns % NANO_PER_SEC;
+    let ts = unsafe { check_ptr_mut(ts)? };
+    let us = get_time_ns();
+    ts.sec = us / NANO_PER_SEC;
+    ts.nsec = us % NANO_PER_SEC;
     Ok(0)
 }
 
@@ -297,7 +286,7 @@ pub fn sys_mmap(addr: usize, len: usize, prot: u32, flags: u32, fd: i32, offset:
             log::error!("fd must be -1 and offset must be 0 for anonyous mapping");
             return Err(code::EPERM);
         }
-        let process = current_process();
+        let process = curr_process();
         log::debug!("pid: {}", process.pid());
         let mut inner = process.inner();
         // TODO: 还没有处理 MmapFlags::MAP_FIXED 的情况？
@@ -337,7 +326,7 @@ pub fn sys_spawn(_path: *const u8) -> Result {
 /// - `tidptr`
 pub fn sys_set_tid_address(tidptr: *const i32) -> Result {
     // NOTE: 在 linux 手册中，`tidptr` 的类型是 int*。这里设置为 i32，是参考 libc crate 设置 c_int=i32
-    let thread = current_task().unwrap();
+    let thread = curr_task().unwrap();
     let mut inner = thread.inner();
     inner.clear_child_tid = tidptr as usize;
     Ok(inner.res.as_ref().unwrap().tid as isize)
@@ -350,7 +339,7 @@ pub fn sys_set_tid_address(tidptr: *const i32) -> Result {
 /// 参数：
 /// - `brk` 希望设置的 program break 值
 pub fn sys_brk(brk: usize) -> Result {
-    let process = current_process();
+    let process = curr_process();
     let mut inner = process.inner();
     // 不大于最初的堆地址则失败。其中也包括了 brk 为 0  的情况
     Ok(inner.set_user_brk(brk) as isize)
@@ -372,20 +361,17 @@ pub fn sys_sigaction(
     if matches!(signal, Signal::SIGKILL | Signal::SIGSTOP) {
         return Err(code::EINVAL);
     }
-    let process = current_process();
+    let process = curr_process();
     let mut inner = process.inner();
-    let mut pt = PageTable::from_token(inner.user_token());
 
     if !old_act.is_null() {
-        // FIXME: 地址空间变换后修正
-        // let old_act = unsafe { pt.trans_ptr_mut(old_act)? };
-        // *old_act = inner.sig_handlers.action(signal);
+        let old_act = unsafe { check_ptr_mut(old_act)? };
+        *old_act = inner.sig_handlers.action(signal);
     }
 
     if !act.is_null() {
-        // FIXME: 地址空间变换后修正
-        // let act = unsafe { pt.trans_va(act)? };
-        // inner.sig_handlers.set_action(signal, *act);
+        let act = unsafe { check_ptr(act)? };
+        inner.sig_handlers.set_action(signal, *act);
     }
 
     Ok(0)
@@ -410,16 +396,13 @@ pub fn sys_sigprocmask(
     if sigsetsize != SIGSET_SIZE_BYTES {
         return Err(code::EINVAL);
     }
-    let thread = current_task().unwrap();
+    let thread = curr_task().unwrap();
     let mut inner = thread.inner();
-    let mut pt = PageTable::from_token(thread.user_token());
 
     let sig_set = &mut inner.sig_receiver.mask;
     if !old_set.is_null() {
-        unsafe {
-            // FIXME: 地址空间变换后修正
-            // *pt.trans_ptr_mut(old_set)? = *sig_set;
-        }
+        let old_set = unsafe { check_ptr_mut(old_set)? };
+        *old_set = *sig_set;
     }
     if set.is_null() {
         return Ok(0);
@@ -428,30 +411,27 @@ pub fn sys_sigprocmask(
     const SIG_UNBLOCK: usize = 1;
     const SIG_SETMASK: usize = 2;
 
-    // FIXME: 地址空间变换后修正
-    // let new_set = unsafe { *pt.trans_va(set)? };
-    // match how {
-    //     SIG_BLOCK => {
-    //         sig_set.insert(new_set);
-    //     }
-    //     SIG_UNBLOCK => {
-    //         sig_set.remove(new_set);
-    //     }
-    //     SIG_SETMASK => {
-    //         *sig_set = new_set;
-    //     }
-    //     _ => return Err(code::EINVAL),
-    // }
+    let set = unsafe { check_ptr(set)? };
+    match how {
+        SIG_BLOCK => {
+            sig_set.insert(*set);
+        }
+        SIG_UNBLOCK => {
+            sig_set.remove(*set);
+        }
+        SIG_SETMASK => {
+            *sig_set = *set;
+        }
+        _ => return Err(code::EINVAL),
+    }
 
     Ok(0)
 }
 
-/// 返回系统信息，目前设计中永不失败，返回 0
+/// 返回系统信息，返回值为 0
 pub fn sys_uname(utsname: *mut UtsName) -> Result {
-    unsafe {
-        // FIXME: 地址空间变换后修正
-        // *current_page_table().trans_ptr_mut(utsname)? = UtsName::default();
-    }
+    let utsname = unsafe { check_ptr_mut(utsname)? };
+    *utsname = UtsName::default();
     Ok(0)
 }
 

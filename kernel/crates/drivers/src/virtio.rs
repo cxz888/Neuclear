@@ -1,27 +1,81 @@
+use core::ptr::NonNull;
+
 use super::BlockDevice;
-use alloc::sync::Arc;
-use alloc::vec::Vec;
 use lazy_static::*;
-use memory::{
-    frame_alloc, frame_dealloc, kernel_pa_to_va, kernel_va_to_pa, FrameTracker, PhysAddr,
-    PhysPageNum, VirtAddr,
-};
+use memory::{frame_alloc, frame_dealloc, PhysAddr, PhysPageNum};
 use utils::{config::PA_TO_VA, upcell::UPSafeCell};
-use virtio_drivers::{VirtIOBlk, VirtIOHeader};
+use virtio_drivers::{
+    device::blk::VirtIOBlk,
+    transport::{
+        mmio::{MmioTransport, VirtIOHeader},
+        DeviceType, Transport,
+    },
+    Hal,
+};
 
 type BlockDeviceImpl = VirtIOBlock;
 
 lazy_static! {
-    pub static ref BLOCK_DEVICE: Arc<dyn BlockDevice> = Arc::new(BlockDeviceImpl::new());
+    pub static ref BLOCK_DEVICE: BlockDeviceImpl = BlockDeviceImpl::new();
 }
 
 const VIRTIO0: usize = 0x10001000;
 
-pub struct VirtIOBlock(UPSafeCell<VirtIOBlk<'static>>);
+pub struct HalImpl;
 
-lazy_static! {
-    static ref QUEUE_FRAMES: UPSafeCell<Vec<FrameTracker>> = unsafe { UPSafeCell::new(Vec::new()) };
+unsafe impl Hal for HalImpl {
+    fn dma_alloc(
+        pages: usize,
+        _direction: virtio_drivers::BufferDirection,
+    ) -> (virtio_drivers::PhysAddr, NonNull<u8>) {
+        let frame = frame_alloc(pages).unwrap();
+        // 这个 frame 交由库管理了，要阻止它调用 drop
+        let pa_start = frame.ppn.page_start().0;
+        core::mem::forget(frame);
+        let vptr = NonNull::new((pa_start + PA_TO_VA) as _).unwrap();
+        (pa_start, vptr)
+    }
+
+    unsafe fn dma_dealloc(
+        paddr: virtio_drivers::PhysAddr,
+        _vaddr: core::ptr::NonNull<u8>,
+        pages: usize,
+    ) -> i32 {
+        let mut ppn: PhysPageNum = PhysAddr(paddr).ppn();
+        frame_dealloc(ppn..PhysPageNum(ppn.0 + pages));
+        ppn.0 += 1;
+        0
+    }
+
+    unsafe fn mmio_phys_to_virt(paddr: virtio_drivers::PhysAddr, _size: usize) -> NonNull<u8> {
+        let va = paddr + PA_TO_VA;
+        NonNull::new(va as _).unwrap()
+    }
+
+    // 不知道 share 和 unshare 干嘛的，先这么实现着
+    unsafe fn share(
+        buffer: core::ptr::NonNull<[u8]>,
+        _direction: virtio_drivers::BufferDirection,
+    ) -> virtio_drivers::PhysAddr {
+        let vaddr = buffer.addr().get();
+        assert!(vaddr >= PA_TO_VA);
+        vaddr - PA_TO_VA
+    }
+
+    // 在我们的场景中似乎不需要？
+    unsafe fn unshare(
+        _paddr: virtio_drivers::PhysAddr,
+        _buffer: core::ptr::NonNull<[u8]>,
+        _direction: virtio_drivers::BufferDirection,
+    ) {
+    }
 }
+
+/// 一个 Wrapper，为了能够满足 `Send` 从而声明为 static
+pub struct VirtIOBlock(UPSafeCell<VirtIOBlk<HalImpl, MmioTransport>>);
+
+// NOTE: 暂时不知道这么做行不行，以后再看看
+unsafe impl Send for VirtIOBlock {}
 
 impl BlockDevice for VirtIOBlock {
     fn read_block(&self, block_id: u64, buf: &mut [u8]) {
@@ -40,44 +94,11 @@ impl BlockDevice for VirtIOBlock {
 
 impl VirtIOBlock {
     pub fn new() -> Self {
+        let header = NonNull::new((VIRTIO0 + PA_TO_VA) as *mut VirtIOHeader).unwrap();
         unsafe {
-            Self(UPSafeCell::new(
-                VirtIOBlk::new(&mut *((VIRTIO0 + PA_TO_VA) as *mut VirtIOHeader)).unwrap(),
-            ))
+            let transport = MmioTransport::new(header).unwrap();
+            assert!(transport.device_type() == DeviceType::Block);
+            VirtIOBlock(UPSafeCell::new(VirtIOBlk::new(transport).unwrap()))
         }
     }
-}
-
-#[no_mangle]
-pub extern "C" fn virtio_dma_alloc(pages: usize) -> PhysAddr {
-    let mut ppn_base = PhysPageNum(0);
-    for i in 0..pages {
-        let frame = frame_alloc().unwrap();
-        if i == 0 {
-            ppn_base = frame.ppn;
-        }
-        assert_eq!(frame.ppn.0, ppn_base.0 + i);
-        QUEUE_FRAMES.exclusive_access().push(frame);
-    }
-    ppn_base.page_start()
-}
-
-#[no_mangle]
-pub extern "C" fn virtio_dma_dealloc(pa: PhysAddr, pages: usize) -> i32 {
-    let mut ppn_base: PhysPageNum = pa.ppn();
-    for _ in 0..pages {
-        frame_dealloc(ppn_base);
-        ppn_base.0 += 1;
-    }
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn virtio_phys_to_virt(paddr: PhysAddr) -> VirtAddr {
-    kernel_pa_to_va(paddr)
-}
-
-#[no_mangle]
-pub extern "C" fn virtio_virt_to_phys(vaddr: VirtAddr) -> PhysAddr {
-    kernel_va_to_pa(vaddr)
 }

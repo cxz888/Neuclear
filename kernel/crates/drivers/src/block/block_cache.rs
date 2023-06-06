@@ -10,14 +10,14 @@ pub struct BlockCache {
     /// underlying block id
     block_id: u64,
     /// underlying block device
-    block_device: Arc<dyn BlockDevice>,
+    block_device: &'static dyn BlockDevice,
     /// whether the block is dirty
     modified: bool,
 }
 
 impl BlockCache {
     /// Load a new BlockCache from disk.
-    pub fn new(block_id: u64, block_device: Arc<dyn BlockDevice>) -> Self {
+    pub fn new(block_id: u64, block_device: &'static dyn BlockDevice) -> Self {
         let mut cache = [0u8; BLOCK_SIZE as usize];
         block_device.read_block(block_id, &mut cache);
         Self {
@@ -101,7 +101,7 @@ impl BlockCacheManager {
     pub fn get_block_cache(
         &mut self,
         block_id: u64,
-        block_device: Arc<dyn BlockDevice>,
+        block_device: &'static dyn BlockDevice,
     ) -> Arc<Mutex<BlockCache>> {
         if let Some(pair) = self.queue.iter().find(|pair| pair.0 == block_id) {
             Arc::clone(&pair.1)
@@ -134,7 +134,7 @@ pub static BLOCK_CACHE_MANAGER: Mutex<BlockCacheManager> = Mutex::new(BlockCache
 /// Get the block cache corresponding to the given block id and block device
 pub fn get_block_cache(
     block_id: u64,
-    block_device: Arc<dyn BlockDevice>,
+    block_device: &'static dyn BlockDevice,
 ) -> Arc<Mutex<BlockCache>> {
     BLOCK_CACHE_MANAGER
         .lock()

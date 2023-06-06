@@ -61,31 +61,25 @@ pub struct MemorySet {
 impl MemorySet {
     pub fn new_bare() -> Self {
         Self {
-            page_table: PageTable::new(),
+            page_table: PageTable::with_root(),
             areas: BTreeMap::new(),
         }
     }
 
-    fn map_kernel_areas(&mut self, kernel_pt: &PageTable) {
+    /// 映射高地址中的内核段，注意不持有它们的所有权
+    pub fn map_kernel_areas(&mut self, kernel_pt: &PageTable) {
         // 用户地址空间中，高地址是内核的部分
-        // 具体而言，就是 [0xffff_ffff_8000_000,0xffff_ffff_ffff_fff]（还包括内核栈和 TrapContext）
-        // 以及 [0xffff_ffff_0000_0000,0xffff_ffff_4000_0000]（MMIO 所在的大页）
+        // 具体而言，就是 [0xffff_ffff_8000_000, 0xffff_ffff_ffff_fff]（还包括内核栈和 TrapContext）
+        // 以及 [0xffff_ffff_0000_0000, 0xffff_ffff_3fff_ffff]（MMIO 所在的大页）
         // 也就是内核根页表的第 508、510、511 项
         unsafe {
             // 这些需要映射到用户的页表中
             for line in [508, 510, 511] {
-                let user_pte = self.page_table.get_root_pte_mut(line);
-                let kernel_pte = kernel_pt.get_root_pte(line);
+                let user_pte = self.page_table.root_pte_mut(line);
+                let kernel_pte = kernel_pt.root_pte(line);
                 user_pte.bits = kernel_pte.bits
             }
         }
-    }
-
-    /// 创建一个用户的地址空间，它的高地址中映射好了所需的内核部分
-    pub fn new_user(kernel_pt: &PageTable) -> Self {
-        let mut memory_set = Self::new_bare();
-        memory_set.map_kernel_areas(kernel_pt);
-        memory_set
     }
 
     /// Without kernel stacks.
@@ -291,9 +285,19 @@ impl MemorySet {
     pub fn translate(&self, vpn: VirtPageNum) -> Option<PhysPageNum> {
         self.page_table.translate(vpn)
     }
-    pub fn recycle_data_pages(&mut self) {
-        //*self = Self::new_bare();
+    pub fn recycle_all_pages(&mut self) {
         self.areas.clear();
+    }
+    /// 只回收进程低 256GiB 部分的页面，也就是用户进程专属的页（包括页表）
+    pub fn recycle_user_pages(&mut self) {
+        // TODO: 等等，Memory.areas 中是不是其实只存放了用户地址的映射？
+        // 也就是只保留高地址的空间
+        self.areas.retain(|vpn, _| vpn.0 >= LOW_END / PAGE_SIZE);
+        self.page_table.clear_except_root();
+        // 根页表要处理下，把用户地址的页表项去除，以防已经回收的页仍然能被访问
+        unsafe {
+            self.page_table.root_page()[0..PAGE_SIZE / 2].fill(0);
+        }
     }
 }
 
@@ -370,7 +374,7 @@ impl MapArea {
                 ppn = PhysPageNum(vpn.0 - *offset / PAGE_SIZE);
             }
             MapType::Framed { data_frames } => {
-                let frame = frame_alloc().unwrap();
+                let frame = frame_alloc(1).unwrap();
                 ppn = frame.ppn;
                 data_frames.insert(vpn, Arc::new(frame));
             }

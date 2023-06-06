@@ -1,7 +1,6 @@
-use super::{File, Stat, StatMode, __suspend_current_and_run_next};
+use super::{File, Stat, StatMode, __suspend_curr_and_run_next};
 use alloc::sync::{Arc, Weak};
 use drivers::BLOCK_SIZE;
-use memory::UserBuffer;
 use utils::upcell::UPSafeCell;
 
 const RING_BUFFER_SIZE: usize = 32;
@@ -119,7 +118,7 @@ impl File for Pipe {
     fn writable(&self) -> bool {
         self.writable
     }
-    fn read(&self, buf: UserBuffer) -> usize {
+    fn read(&self, buf: &mut [u8]) -> usize {
         assert!(self.readable());
         let mut buf_iter = buf.into_iter();
         let mut read_size = 0usize;
@@ -132,15 +131,13 @@ impl File for Pipe {
                 }
                 drop(ring_buffer);
                 unsafe {
-                    __suspend_current_and_run_next();
+                    __suspend_curr_and_run_next();
                 }
                 continue;
             }
             for _ in 0..available_read {
                 if let Some(byte_ref) = buf_iter.next() {
-                    unsafe {
-                        *byte_ref = ring_buffer.read_byte();
-                    }
+                    *byte_ref = ring_buffer.read_byte();
                     read_size += 1;
                 } else {
                     return read_size;
@@ -148,7 +145,7 @@ impl File for Pipe {
             }
         }
     }
-    fn write(&self, buf: UserBuffer) -> usize {
+    fn write(&self, buf: &[u8]) -> usize {
         assert!(self.writable());
         let mut buf_iter = buf.into_iter();
         let mut write_size = 0usize;
@@ -158,14 +155,14 @@ impl File for Pipe {
             if loop_write == 0 {
                 drop(ring_buffer);
                 unsafe {
-                    __suspend_current_and_run_next();
+                    __suspend_curr_and_run_next();
                 }
                 continue;
             }
             // write at most loop_write bytes
             for _ in 0..loop_write {
-                if let Some(byte_ref) = buf_iter.next() {
-                    ring_buffer.write_byte(unsafe { *byte_ref });
+                if let Some(&byte_ref) = buf_iter.next() {
+                    ring_buffer.write_byte(byte_ref);
                     write_size += 1;
                 } else {
                     return write_size;

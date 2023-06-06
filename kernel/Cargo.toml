@@ -1,10 +1,12 @@
 [workspace]
 members = ["crates/*"]
+resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
 authors = ["cxz888 <idlercloud@gmail.com>"]
 edition = "2021"
+
 
 [workspace.dependencies]
 bitflags = "2.0"

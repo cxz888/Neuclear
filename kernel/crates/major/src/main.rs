@@ -36,8 +36,12 @@ pub fn rust_main() -> ! {
     // 允许在内核态下访问用户数据
     unsafe { sstatus::set_sum() };
     trap::init();
-    trap::enable_timer_interrupt();
-    time::set_next_trigger();
-    filesystem::list_apps();
+    #[cfg(not(feature = "test"))]
+    {
+        // 初赛测试模式下，操作系统表现为批处理系统，挨个加载挨个运行，不需要定时器中断
+        trap::enable_timer_interrupt();
+        time::set_next_trigger();
+    }
+    task::list_apps();
     task::run_tasks();
 }

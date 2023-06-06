@@ -32,3 +32,6 @@ filesystem = { path = "../filesystem" }
 [[bin]]
 name = "kernel"
 path = "src/main.rs"
+
+[features]
+test = []

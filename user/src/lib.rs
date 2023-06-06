@@ -245,10 +245,16 @@ pub fn wait(exit_code: &mut i32) -> isize {
 pub fn waitpid(pid: usize, exit_code: &mut i32) -> isize {
     loop {
         match sys_waitpid(pid as isize, exit_code as *mut _) {
-            -11 => {
+            -11 | 0 => {
                 sys_yield();
             }
             n => {
+                if n > 0 {
+                    *exit_code = (*exit_code & 0xff00) >> 8;
+                    if *exit_code & 0b10000000 != 0 {
+                        *exit_code |= 0xffffff00u32 as i32;
+                    }
+                }
                 return n;
             }
         }
@@ -290,7 +296,7 @@ pub fn gettid() -> isize {
 pub fn waittid(tid: usize) -> isize {
     loop {
         match sys_waittid(tid) {
-            -11 => {
+            -11 | 0 => {
                 yield_();
             }
             exit_code => return exit_code,

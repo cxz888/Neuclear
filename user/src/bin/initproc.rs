@@ -9,11 +9,16 @@ use user_lib::{exec, fork, wait};
 #[no_mangle]
 fn main() -> i32 {
     if fork() == 0 {
-        exec("shell\0", &["shell\0".as_ptr(), core::ptr::null::<u8>()]);
+        exec("shell\0", &["shell\0".as_ptr(), core::ptr::null()]);
     } else {
         loop {
             let mut exit_code: i32 = 0;
             let pid = wait(&mut exit_code);
+            // No child
+            if pid == -10 {
+                println!("[initproc] No child process. OS shutdown");
+                return 0;
+            }
             if pid < 0 {
                 panic!("Error with {}", pid);
             }

@@ -6,7 +6,7 @@ mod thread;
 
 pub use flags::{MmapFlags, MmapProt};
 
-use crate::task::{__exit_current_and_run_next, current_process, current_trap_ctx};
+use crate::task::{__exit_curr_and_run_next, curr_process, curr_trap_ctx};
 use fs::*;
 use process::*;
 use sync::*;
@@ -19,7 +19,7 @@ macro_rules! declare_syscall_id {
         fn name(id: usize) -> &'static str {
             match id {
                 $($name => stringify!($name),)*
-                _ => unreachable!(),
+                _ => unreachable!("{}", id),
             }
         }
     };
@@ -31,8 +31,10 @@ declare_syscall_id!(
     DUP, 24,
     FCNTL64, 25,
     IOCTL, 29,
+    MKDIRAT, 34,
     UNLINKAT, 35,
     LINKAT, 37,
+    CHDIR, 49,
     OPENAT, 56,
     CLOSE, 57,
     PIPE2, 59,
@@ -127,22 +129,21 @@ pub fn syscall(id: usize, args: [usize; 6]) -> isize {
         WAITTID => sys_waittid(args[0]),
         _ => {
             log::error!("[kernel] Unsupport inst pc = {:#x}", unsafe {
-                current_trap_ctx().sepc
+                curr_trap_ctx().sepc
             },);
             log::error!("[kernel] Unsupported id: {}", id);
-            __exit_current_and_run_next(-10);
+            __exit_curr_and_run_next(-10);
         }
     };
-    let curr_pid = current_process().pid.0;
+    let curr_pid = curr_process().pid.0;
     match ret {
         Ok(ret) => {
             // 读入标准输入、写入标准输出、写入标准错误、INITPROC 和 shell 都不关心
             if !((id == READ || id == READV) && args[0] == 0
                 || (id == WRITE || id == WRITEV) && (args[0] == 1 || args[0] == 2)
                 || id == PPOLL)
-            // TODO: 暂时 PPOLL 也忽略
-            // && curr_pid != 0
-            // && curr_pid != 1
+                && curr_pid != 0
+                && curr_pid != 1
             {
                 log::info!(
                     "[kernel] pid: {curr_pid}, syscall: {}, return {ret} = {ret:#x}",

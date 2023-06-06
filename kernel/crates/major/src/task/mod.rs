@@ -15,9 +15,8 @@ mod time;
 
 pub use clone_flags::CloneFlags;
 pub use manager::add_task;
-pub use processor::{
-    current_page_table, current_process, current_task, current_trap_ctx, run_tasks,
-};
+pub use process::{check_cstr, check_ptr, check_ptr_mut, check_slice, check_slice_mut};
+pub use processor::{curr_page_table, curr_process, curr_task, curr_trap_ctx, run_tasks};
 pub use thread::{ThreadControlBlock, ThreadStatus};
 pub use time::{add_timer, check_timer};
 
@@ -27,15 +26,15 @@ use core::mem;
 use lazy_static::*;
 use manager::fetch_task;
 use process::{ProcessControlBlock, ProcessControlBlockInner};
-use processor::{schedule, take_current_task};
+use processor::{schedule, take_curr_task};
 use resource::{pid_alloc, KernelStack, PidHandle, ThreadUserRes};
 use switch::__switch;
 
 #[no_mangle]
-pub extern "C" fn __block_current_and_run_next() {
+pub extern "C" fn __block_curr_and_run_next() {
     let task_ctx_ptr;
     {
-        let task = take_current_task().unwrap();
+        let task = take_curr_task().unwrap();
         let mut task_inner = task.inner();
         task_ctx_ptr = &mut task_inner.task_ctx as *mut TaskContext;
         task_inner.thread_status = ThreadStatus::Blocking;
@@ -45,9 +44,9 @@ pub extern "C" fn __block_current_and_run_next() {
 
 /// 挂起当前任务，并切换到下一个任务
 #[no_mangle]
-pub extern "C" fn __suspend_current_and_run_next() {
+pub extern "C" fn __suspend_curr_and_run_next() {
     let task_ctx_ptr;
-    let task = take_current_task().unwrap();
+    let task = take_curr_task().unwrap();
     {
         let mut task_inner = task.inner();
         task_ctx_ptr = &mut task_inner.task_ctx as *mut TaskContext;
@@ -61,8 +60,8 @@ pub extern "C" fn __suspend_current_and_run_next() {
 
 /// 退出当前线程，并切换到下一个任务，如果是主线程则回收进程资源
 #[no_mangle]
-pub extern "C" fn __exit_current_and_run_next(exit_code: i32) -> ! {
-    let task = take_current_task().unwrap();
+pub extern "C" fn __exit_curr_and_run_next(exit_code: i32) -> ! {
+    let task = take_curr_task().unwrap();
     let mut task_inner = task.inner();
     let process = task.process.upgrade().unwrap();
     let tid = task_inner.res.as_ref().unwrap().tid;
@@ -77,6 +76,7 @@ pub extern "C" fn __exit_current_and_run_next(exit_code: i32) -> ! {
 
     // 主线程退出，则回收所有进程资源
     if tid == 0 {
+        log::info!("Process {} exits", process.pid.0);
         let mut process_inner = process.inner();
         process_inner.is_zombie = true;
         process_inner.exit_code = exit_code;
@@ -106,7 +106,7 @@ pub extern "C" fn __exit_current_and_run_next(exit_code: i32) -> ! {
 
         let mut process_inner = process.inner();
         process_inner.children.clear();
-        process_inner.memory_set.recycle_data_pages();
+        process_inner.memory_set.recycle_all_pages();
         process_inner.fd_table.clear();
     }
 
@@ -118,9 +118,31 @@ pub extern "C" fn __exit_current_and_run_next(exit_code: i32) -> ! {
     unreachable!()
 }
 
+// FIXME: 权宜之计罢了
+#[cfg(feature = "test")]
+static EXEC_TEST_ELF: &[u8] = include_bytes!("../exec_test.elf");
+
 lazy_static! {
-    // TODO: 注意，暂时是 initproc，后续可能要变
     pub static ref INITPROC: Arc<ProcessControlBlock> = {
-        ProcessControlBlock::from_path("initproc".to_string(),vec!["initproc".to_string()]).expect("INITPROC Failed.")
+        #[cfg(feature = "test")]
+        return ProcessControlBlock::from_elf(
+            "exec_test".to_string(),
+            vec!["exec_test".to_string()],
+            EXEC_TEST_ELF,
+        )
+        .expect("INITPROC Failed");
+        #[cfg(not(feature = "test"))]
+        ProcessControlBlock::from_path("initproc".to_string(), vec!["initproc".to_string()])
+            .expect("INITPROC Failed.")
     };
+}
+
+/// List all files in the filesystems
+pub fn list_apps() {
+    println!("/**** APPS ****");
+    use vfs::{Entry, Fs};
+    for app in filesystem::VIRTUAL_FS.root_dir().ls().unwrap() {
+        println!("{}", app);
+    }
+    println!("**************/");
 }

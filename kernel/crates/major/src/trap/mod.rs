@@ -13,8 +13,7 @@ mod syscall;
 pub use context::TrapContext;
 
 use crate::task::{
-    __exit_current_and_run_next, __suspend_current_and_run_next, check_timer, current_process,
-    current_trap_ctx,
+    __exit_curr_and_run_next, __suspend_curr_and_run_next, check_timer, curr_process, curr_trap_ctx,
 };
 use riscv::register::{
     mtvec::TrapMode,
@@ -48,15 +47,15 @@ pub fn __trap_handler() {
     if let sstatus::SPP::Supervisor = sstatus::read().spp() {
         panic!("a trap {:?} from kernel!", scause.cause());
     }
-    log::trace!("pid {}: pc-{:#x}", current_process().pid.0, unsafe {
-        current_trap_ctx().sepc
+    log::trace!("pid {}: pc-{:#x}", curr_process().pid.0, unsafe {
+        curr_trap_ctx().sepc
     });
     log::debug!("Trap happened {:?}", scause.cause());
     let stval = stval::read();
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
             // jump to next instruction anyway
-            let mut cx = unsafe { current_trap_ctx() };
+            let mut cx: &mut TrapContext = unsafe { curr_trap_ctx() };
             cx.sepc += 4;
             // get system call return value
             let result = syscall(
@@ -64,7 +63,7 @@ pub fn __trap_handler() {
                 [cx.x[10], cx.x[11], cx.x[12], cx.x[13], cx.x[14], cx.x[15]],
             );
             // cx is changed during sys_exec, so we have to call it again
-            cx = unsafe { current_trap_ctx() };
+            cx = unsafe { curr_trap_ctx() };
             cx.x[10] = result as usize;
         }
         Trap::Exception(Exception::StoreFault)
@@ -74,31 +73,31 @@ pub fn __trap_handler() {
         | Trap::Exception(Exception::LoadFault)
         | Trap::Exception(Exception::LoadPageFault) => {
             unsafe {
-                log::debug!("ctx: {:#x?}", current_trap_ctx().x);
+                log::debug!("ctx: {:#x?}", curr_trap_ctx().x);
                 log::error!(
                 "[kernel] {:?} in application, bad addr = {:#x}, bad inst pc = {:#x}, core dumped.",
                 scause.cause(),
                 stval,
-                current_trap_ctx().sepc,
+                curr_trap_ctx().sepc,
             );
             }
             // page fault exit code
-            __exit_current_and_run_next(-2);
+            __exit_curr_and_run_next(-2);
         }
         Trap::Exception(Exception::IllegalInstruction) => {
             unsafe {
-                log::debug!("trap_ctx: {:#x?}", current_trap_ctx().x);
+                log::debug!("trap_ctx: {:#x?}", curr_trap_ctx().x);
                 log::error!(
                     "[kernel] IllegalInstruction(pc={:#x}) in application, core dumped.",
-                    current_trap_ctx().sepc
+                    curr_trap_ctx().sepc
                 );
             }
-            __exit_current_and_run_next(-3);
+            __exit_curr_and_run_next(-3);
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             set_next_trigger();
             check_timer();
-            __suspend_current_and_run_next();
+            __suspend_curr_and_run_next();
         }
         _ => {
             panic!(

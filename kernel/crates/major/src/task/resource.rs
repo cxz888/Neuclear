@@ -5,8 +5,8 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
-use memory::{MapPermission, MemorySet, VirtAddr, KERNEL_SPACE};
-use utils::config::{ADDR_END, KERNEL_STACK_SIZE, LOW_END, PAGE_SIZE, USER_STACK_SIZE};
+use memory::{frame_alloc, kernel_ppn_to_vpn, FrameTracker, MapPermission, MemorySet, VirtAddr};
+use utils::config::{KERNEL_STACK_SIZE, LOW_END, PAGE_SIZE, USER_STACK_SIZE};
 use utils::upcell::UPSafeCell;
 
 #[derive(Clone)]
@@ -43,8 +43,6 @@ impl RecycleAllocator {
 
 static PID_ALLOCATOR: UPSafeCell<RecycleAllocator> =
     unsafe { UPSafeCell::new(RecycleAllocator::new()) };
-static KSTACK_ALLOCATOR: UPSafeCell<RecycleAllocator> =
-    unsafe { UPSafeCell::new(RecycleAllocator::new()) };
 
 #[derive(Debug)]
 pub struct PidHandle(pub usize);
@@ -59,24 +57,14 @@ impl Drop for PidHandle {
     }
 }
 
-/// 返回内核栈的在内核地址空间中的（低地址，高地址）
-#[inline]
-pub fn kernel_stack_addr(kstack_id: usize) -> (usize, usize) {
-    // 每个内核栈下方紧跟着一个 Guard Page，用于防止溢出
-    // 为了防止算术溢出，从倒数第二个页开始用作内核栈
-    let high = ADDR_END - PAGE_SIZE - kstack_id * (KERNEL_STACK_SIZE + PAGE_SIZE) + 1;
-    let low = high - KERNEL_STACK_SIZE;
-    (low, high)
-}
-
 /// 内核栈，线程在内核中进行处理时所使用的的栈位于地址空间的最高处。
-pub struct KernelStack(pub usize);
+pub struct KernelStack(pub FrameTracker);
 
 impl KernelStack {
     /// 返回内核空间中内核栈的高地址
     #[inline]
     pub fn high_addr(&self) -> usize {
-        kernel_stack_addr(self.0).1
+        kernel_ppn_to_vpn(self.0.ppn.add(self.0.num)).page_start().0
     }
     /// 返回内核空间中内核栈的 `TrapContext` 起始的位置，同时也是内核栈最初运行时实质上的栈顶
     #[inline]
@@ -85,30 +73,13 @@ impl KernelStack {
     }
 }
 
-impl Drop for KernelStack {
-    fn drop(&mut self) {
-        let (kernel_stack_bottom, _) = kernel_stack_addr(self.0);
-        let kernel_stack_bottom_va = VirtAddr(kernel_stack_bottom);
-        // let kernel_stack_bottom_pa: PhysAddr = kernel_stack_bottom.into();
-        // println!("kstack_drop  kstack_bottom: va: {:#x?}, pa: {:#x?}", kernel_stack_bottom_va, kernel_stack_bottom_pa);
-        KSTACK_ALLOCATOR.exclusive_access().dealloc(self.0);
-        KERNEL_SPACE
-            .exclusive_access()
-            .remove_area_with_start_vpn(kernel_stack_bottom_va.vpn());
-    }
-}
-
 /// 给一个线程分配内核栈
 pub fn kstack_alloc() -> KernelStack {
-    let kstack_id = KSTACK_ALLOCATOR.exclusive_access().alloc();
-    let (kstack_low, kstack_high) = kernel_stack_addr(kstack_id);
-    // 内核中
-    KERNEL_SPACE.exclusive_access().insert_framed_area(
-        VirtAddr(kstack_low).vpn_floor(),
-        VirtAddr(kstack_high).vpn_ceil(),
-        MapPermission::R | MapPermission::W,
-    );
-    KernelStack(kstack_id)
+    let kstack = KernelStack(frame_alloc(KERNEL_STACK_SIZE / PAGE_SIZE).unwrap());
+    let kstack_high = kstack.high_addr();
+    let kstack_low = kstack_high - KERNEL_STACK_SIZE;
+    log::info!("Kernel stack [{kstack_low:#x},{kstack_high:#x})");
+    kstack
 }
 
 /// 用户资源，目前也就是用户栈
@@ -166,7 +137,7 @@ impl ThreadUserRes {
         self.user_stack_high_addr() - USER_STACK_SIZE
     }
 
-    /// 获取当前线程用户栈的高地址，即低地址加上用户栈大小
+    /// 获取当前线程用户栈的高地址
     #[inline]
     pub fn user_stack_high_addr(&self) -> usize {
         // 注意每个用户栈后都会有一个 Guard Page

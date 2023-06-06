@@ -1,4 +1,5 @@
 #![no_std]
+#![feature(strict_provenance)]
 
 extern crate alloc;
 

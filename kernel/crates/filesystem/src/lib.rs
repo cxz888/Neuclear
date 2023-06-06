@@ -8,28 +8,27 @@ extern crate alloc;
 #[macro_use]
 extern crate utils;
 
-pub use inode::{list_apps, open_inode, InodeFile, OpenFlags};
+pub use inode::{open_inode, InodeFile, OpenFlags, VIRTUAL_FS};
 pub use pipe::{make_pipe, Pipe};
 pub use stdio::{Stdin, Stdout};
 
 use alloc::{string::String, sync::Arc};
 use bitflags::bitflags;
-use memory::UserBuffer;
 use utils::{
     error::{code, Result},
     time::TimeSpec,
 };
 
 extern "C" {
-    fn __suspend_current_and_run_next();
+    fn __suspend_curr_and_run_next();
 }
 
 /// The common abstraction of all IO resources
 pub trait File: Send + Sync {
     fn readable(&self) -> bool;
     fn writable(&self) -> bool;
-    fn read(&self, buf: UserBuffer) -> usize;
-    fn write(&self, buf: UserBuffer) -> usize;
+    fn read(&self, buf: &mut [u8]) -> usize;
+    fn write(&self, buf: &[u8]) -> usize;
     fn set_close_on_exec(&self, _bit: bool) {}
     fn status(&self) -> OpenFlags {
         OpenFlags::empty()

@@ -199,7 +199,7 @@ pub struct ChronoTimeProvider {
 #[cfg(feature = "chrono")]
 impl ChronoTimeProvider {
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { _dummy: () }
     }
 }
@@ -223,7 +223,7 @@ pub struct NullTimeProvider {
 
 impl NullTimeProvider {
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { _dummy: () }
     }
 }

@@ -29,8 +29,23 @@ impl PhysAddr {
 pub struct PhysPageNum(pub usize);
 
 impl PhysPageNum {
-    pub fn page_start(&self) -> PhysAddr {
+    pub fn page_start(self) -> PhysAddr {
         PhysAddr(self.0 << PAGE_SIZE_BITS)
+    }
+    pub fn add(self, num_page: usize) -> Self {
+        Self(self.0 + num_page)
+    }
+}
+
+impl Step for PhysPageNum {
+    fn steps_between(start: &Self, end: &Self) -> Option<usize> {
+        end.0.checked_sub(start.0)
+    }
+    fn forward_checked(start: Self, count: usize) -> Option<Self> {
+        start.0.checked_add(count).map(PhysPageNum)
+    }
+    fn backward_checked(start: Self, count: usize) -> Option<Self> {
+        start.0.checked_sub(count).map(PhysPageNum)
     }
 }
 
@@ -136,25 +151,12 @@ impl VirtPageNum {
 
 impl Step for VirtPageNum {
     fn steps_between(start: &Self, end: &Self) -> Option<usize> {
-        if start > end {
-            None
-        } else {
-            Some(end.0 - start.0)
-        }
+        end.0.checked_sub(start.0)
     }
     fn forward_checked(start: Self, count: usize) -> Option<Self> {
-        // 0x0~0x3ff_ffff、0xf_ffff_fc00_0000~0xf_ffff_ffff_ffff 都是合法的虚拟页号
-        if start.0 + count <= 1 << 52 {
-            Some(Self(start.0 + count))
-        } else {
-            None
-        }
+        start.0.checked_add(count).map(VirtPageNum)
     }
     fn backward_checked(start: Self, count: usize) -> Option<Self> {
-        if start.0 >= count {
-            Some(Self(start.0 - count))
-        } else {
-            None
-        }
+        start.0.checked_sub(count).map(VirtPageNum)
     }
 }

@@ -70,12 +70,17 @@ pub struct PageTable {
 
 /// 假定创建和映射时不会导致内存不足
 impl PageTable {
-    pub fn new() -> Self {
-        let frame = frame_alloc().unwrap();
+    /// 注意，创建时会分配一个根页表的帧
+    pub fn with_root() -> Self {
+        let frame = frame_alloc(1).unwrap();
         PageTable {
             root_ppn: frame.ppn,
             frames: vec![frame],
         }
+    }
+    /// 清除根页表之外的其他页表。一般而言，用户的页表中只会含有低地址的页表
+    pub fn clear_except_root(&mut self) {
+        self.frames.truncate(1);
     }
     /// 从 token 生成临时页表。用于在内核态根据用户提供的虚地址访问用户数据。
     pub fn from_token(token: usize) -> Self {
@@ -97,17 +102,22 @@ impl PageTable {
             }
         }
     }
-    pub unsafe fn get_root_pte(&self, line: usize) -> &PageTableEntry {
+    /// 请自行保证 non-alias
+    pub unsafe fn root_pte(&self, line: usize) -> &PageTableEntry {
         &kernel_ppn_to_vpn(self.root_ppn).as_page_ptes()[line]
     }
-    // 请自行保证 non-alias
-    pub unsafe fn get_root_pte_mut(&mut self, line: usize) -> &mut PageTableEntry {
+    /// 请自行保证 non-alias
+    pub unsafe fn root_pte_mut(&mut self, line: usize) -> &mut PageTableEntry {
         &mut kernel_ppn_to_vpn(self.root_ppn).as_page_ptes_mut()[line]
+    }
+    /// 请自行保证 non-alias
+    pub unsafe fn root_page(&mut self) -> &mut [u8; PAGE_SIZE] {
+        kernel_ppn_to_vpn(self.root_ppn).as_page_bytes_mut()
     }
     /// 找到 `vpn` 对应的叶子页表项。注意，该页表项必须是 valid 的。
     ///
     /// TODO: 是否要将翻译相关的函数返回值改为 Result？
-    fn find_pte(&self, vpn: VirtPageNum) -> Option<&PageTableEntry> {
+    pub fn find_pte(&self, vpn: VirtPageNum) -> Option<&PageTableEntry> {
         let idxs = vpn.indexes();
         let mut ppn = self.root_ppn;
         let mut ret = None;
@@ -136,7 +146,7 @@ impl PageTable {
                 break;
             }
             if !pte.is_valid() {
-                let frame = frame_alloc().unwrap();
+                let frame = frame_alloc(1).unwrap();
                 *pte = PageTableEntry::new(frame.ppn, PTEFlags::V);
                 self.frames.push(frame);
             }
@@ -228,60 +238,61 @@ impl PageTable {
     }
 }
 
-/// An abstraction over a buffer passed from user space to kernel space
-#[derive(Debug)]
-pub struct UserBuffer<'a> {
-    pub buffers: Vec<&'a mut [u8]>,
-}
+// TODO: delete UserBuffer
+// /// An abstraction over a buffer passed from user space to kernel space
+// #[derive(Debug)]
+// pub struct UserBuffer<'a> {
+//     pub buffers: Vec<&'a mut [u8]>,
+// }
 
-impl<'a> UserBuffer<'a> {
-    /// Constuct a UserBuffer
-    pub fn new(buffers: Vec<&'a mut [u8]>) -> Self {
-        Self { buffers }
-    }
-    /// Get the length of a UserBuffer
-    pub fn len(&self) -> usize {
-        let mut total: usize = 0;
-        for b in self.buffers.iter() {
-            total += b.len();
-        }
-        total
-    }
-}
+// impl<'a> UserBuffer<'a> {
+//     /// Constuct a UserBuffer
+//     pub fn new(buffers: Vec<&'a mut [u8]>) -> Self {
+//         Self { buffers }
+//     }
+//     /// Get the length of a UserBuffer
+//     pub fn len(&self) -> usize {
+//         let mut total: usize = 0;
+//         for b in self.buffers.iter() {
+//             total += b.len();
+//         }
+//         total
+//     }
+// }
 
-impl<'a> IntoIterator for UserBuffer<'a> {
-    type Item = *mut u8;
-    type IntoIter = UserBufferIterator<'a>;
-    fn into_iter(self) -> Self::IntoIter {
-        UserBufferIterator {
-            buffers: self.buffers,
-            current_buffer: 0,
-            current_idx: 0,
-        }
-    }
-}
+// impl<'a> IntoIterator for UserBuffer<'a> {
+//     type Item = *mut u8;
+//     type IntoIter = UserBufferIterator<'a>;
+//     fn into_iter(self) -> Self::IntoIter {
+//         UserBufferIterator {
+//             buffers: self.buffers,
+//             current_buffer: 0,
+//             current_idx: 0,
+//         }
+//     }
+// }
 
-// An iterator over a UserBuffer
-pub struct UserBufferIterator<'a> {
-    buffers: Vec<&'a mut [u8]>,
-    current_buffer: usize,
-    current_idx: usize,
-}
+// // An iterator over a UserBuffer
+// pub struct UserBufferIterator<'a> {
+//     buffers: Vec<&'a mut [u8]>,
+//     current_buffer: usize,
+//     current_idx: usize,
+// }
 
-impl Iterator for UserBufferIterator<'_> {
-    type Item = *mut u8;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.current_buffer >= self.buffers.len() {
-            None
-        } else {
-            let r = &mut self.buffers[self.current_buffer][self.current_idx] as *mut _;
-            if self.current_idx + 1 == self.buffers[self.current_buffer].len() {
-                self.current_idx = 0;
-                self.current_buffer += 1;
-            } else {
-                self.current_idx += 1;
-            }
-            Some(r)
-        }
-    }
-}
+// impl Iterator for UserBufferIterator<'_> {
+//     type Item = *mut u8;
+//     fn next(&mut self) -> Option<Self::Item> {
+//         if self.current_buffer >= self.buffers.len() {
+//             None
+//         } else {
+//             let r = &mut self.buffers[self.current_buffer][self.current_idx] as *mut _;
+//             if self.current_idx + 1 == self.buffers[self.current_buffer].len() {
+//                 self.current_idx = 0;
+//                 self.current_buffer += 1;
+//             } else {
+//                 self.current_idx += 1;
+//             }
+//             Some(r)
+//         }
+//     }
+// }

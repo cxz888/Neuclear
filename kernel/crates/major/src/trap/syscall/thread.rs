@@ -1,10 +1,10 @@
 use utils::error::{code, Result};
 
-use crate::task::current_task;
+use crate::task::curr_task;
 
 /// TODO: 写注释
 pub fn sys_gettid() -> Result {
-    let tid = current_task().unwrap().inner().res.as_ref().unwrap().tid;
+    let tid = curr_task().unwrap().inner().res.as_ref().unwrap().tid;
     Ok(tid as isize)
 }
 
@@ -12,7 +12,7 @@ pub fn sys_gettid() -> Result {
 /// thread has not exited yet, return -2
 /// otherwise, return thread's exit code
 pub fn sys_waittid(tid: usize) -> Result {
-    let thread = current_task().unwrap();
+    let thread = curr_task().unwrap();
     let process = thread.process.upgrade().unwrap();
     let thread_inner = thread.inner();
     let mut process_inner = process.inner();

@@ -116,3 +116,52 @@ impl StackInit {
         argv_base
     }
 }
+
+/*
+
+CC Stefan
+
+On 09/15/16 13:34, P J P wrote:
+From: Prasad J Pandit <address@hidden>
+virtio back end uses set of buffers to facilitate I/O operations.
+If its size is too large, 'cpu_physical_memory_map' could return
+a null address.  This would result in a null dereference
+while un-mapping descriptors.  Add check to avoid it.
+
+I think the situation you describe is a guest bug.  Just above the code
+that you modify, there's already
+
+if (!sz) {
+error_report("virtio: zero sized buffers are not allowed");
+exit(1);
+}
+
+I think it would be reasonable to handle this other guest bug similarly:
+
+if (iov[num_sg]. iov_base == NULL) {
+error_report("virtio: bogus descriptor or out of resources");
+exit(EXIT_FAILURE);
+}
+
+The main message is of course "bogus descriptor".  OTOH,
+cpu_physical_memory_map() / address_space_map() can return NULL for
+multiple reasons, not all of which seem guest errors: the loop in
+virtqueue_map_desc() handles the case when cpu_physical_memory_map()
+cannot map the entire area requested by the descriptor in a single go,
+and then mapping (part) of the remaining area might fail due to resource
+exhaustion in QEMU (see "resources needed to perform the mapping are
+exhausted" on address_space_map()).
+
+So maybe those error returns from address_space_map() should be
+disentangled first.  (Although, the only difference they'd make at this
+point would be in the error message when we bail out anyway.)
+
+So, unless Stefan or someone else has a better idea, I suggest the above
+error message, and exit(EXIT_FAILURE).  Silently skipping a part (or all
+remaining parts) of the area requested by the descriptor is unlikely to
+produce predictable results for the guest (and the user).
+
+Thanks
+Laszlo
+
+*/

@@ -1,7 +1,7 @@
 TARGET := riscv64imac-unknown-none-elf
-MODE := release
+COMPILE_MOD := release
 APP_DIR := src/bin
-TARGET_DIR := target/$(TARGET)/$(MODE)
+TARGET_DIR := target/$(TARGET)/$(COMPILE_MOD)
 OBJDUMP := rust-objdump --arch-name=riscv64
 OBJCOPY := rust-objcopy --binary-architecture=riscv64
 PY := python3

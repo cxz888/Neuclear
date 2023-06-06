@@ -14,23 +14,23 @@ mod page_table;
 pub use address::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 pub use frame_allocator::{frame_alloc, frame_dealloc, FrameTracker};
 pub use memory_set::{kernel_token, MapArea, MapPermission, MapType, MemorySet, KERNEL_SPACE};
-pub use page_table::{PTEFlags, PageTable, PageTableEntry, UserBuffer};
+pub use page_table::{PTEFlags, PageTable, PageTableEntry};
 
 use utils::config::{PAGE_SIZE, PA_TO_VA};
 
 #[inline]
 #[track_caller]
-pub fn kernel_va_to_pa(va: VirtAddr) -> PhysAddr {
+pub const fn kernel_va_to_pa(va: VirtAddr) -> PhysAddr {
     PhysAddr(va.0 - PA_TO_VA)
 }
 
 #[inline]
-pub fn kernel_pa_to_va(pa: PhysAddr) -> VirtAddr {
+pub const fn kernel_pa_to_va(pa: PhysAddr) -> VirtAddr {
     VirtAddr(pa.0 + PA_TO_VA)
 }
 
 #[inline]
-pub fn kernel_ppn_to_vpn(ppn: PhysPageNum) -> VirtPageNum {
+pub const fn kernel_ppn_to_vpn(ppn: PhysPageNum) -> VirtPageNum {
     VirtPageNum(ppn.0 + PA_TO_VA / PAGE_SIZE)
 }
 

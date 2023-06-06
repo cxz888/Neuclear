@@ -10,7 +10,7 @@ lazy_static = { version = "1.4", features = ["spin_no_std"] }
 spin = "0.9"
 log = "0.4"
 
-virtio-drivers = { git = "https://github.com/rcore-os/virtio-drivers", rev = "93f821c" }
+virtio-drivers = "0.4.0"
 
 memory = { path = "../memory" }
 utils = { path = "../utils" }

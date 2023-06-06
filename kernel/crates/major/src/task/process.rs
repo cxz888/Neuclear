@@ -1,3 +1,4 @@
+use super::curr_page_table;
 use super::loader::Loader;
 use super::{add_task, pid_alloc, resource::RecycleAllocator, PidHandle, ThreadControlBlock};
 use alloc::{
@@ -8,8 +9,9 @@ use alloc::{
 };
 use core::cell::RefMut;
 use filesystem::{File, Stdin, Stdout};
-use memory::{MemorySet, VirtAddr, VirtPageNum};
+use memory::{MemorySet, PTEFlags, VirtAddr, VirtPageNum, KERNEL_SPACE};
 use signal::SignalHandlers;
+use utils::error::code;
 use utils::{error::Result, upcell::UPSafeCell};
 
 pub struct ProcessControlBlock {
@@ -42,7 +44,26 @@ impl ProcessControlBlock {
 
     pub fn from_path(path: String, args: Vec<String>) -> Result<Arc<Self>> {
         let pcb = ProcessControlBlock::new();
-        Loader::load(&mut pcb.inner(), path, args)?;
+        {
+            let mut pcb_inner = pcb.inner();
+            pcb_inner
+                .memory_set
+                .map_kernel_areas(&KERNEL_SPACE.exclusive_access().page_table);
+            Loader::load(&mut pcb_inner, path, args)?;
+        }
+        Ok(pcb)
+    }
+
+    // TODO: 这个接口未来也许可以确定下来，代替 new() 之类的，看下面的 _spawn()
+    pub fn from_elf(name: String, args: Vec<String>, elf_data: &[u8]) -> Result<Arc<Self>> {
+        let pcb = ProcessControlBlock::new();
+        {
+            let mut pcb_inner = pcb.inner();
+            pcb_inner
+                .memory_set
+                .map_kernel_areas(&KERNEL_SPACE.exclusive_access().page_table);
+            Loader::load_elf(&mut pcb_inner, name, args, elf_data)?;
+        }
         Ok(pcb)
     }
 
@@ -79,8 +100,11 @@ impl ProcessControlBlock {
         // 新进程添入原进程的子进程表
         parent_inner.children.push(Arc::clone(&child));
         // 创建子进程的主线程
-        // 这里不需要再分配用户栈了，但需要分配内核栈，并且复制父进程的 trap context
-        let thread = Arc::new(ThreadControlBlock::new(&child));
+        // 这里不需要分配用户栈了，因为复制了地址空间，但需要分配内核栈，并且复制父进程的 trap context
+        let thread = Arc::new(ThreadControlBlock::from_existed(
+            parent_inner.threads[0].as_ref().unwrap(),
+            &child,
+        ));
         unsafe {
             *thread.inner().trap_ctx() = parent_inner.main_thread().inner().trap_ctx().clone();
         }
@@ -90,11 +114,16 @@ impl ProcessControlBlock {
         child
     }
 
-    /// 根据 `path` 加载一个新的 ELF 文件并执行。目前必须原进程仅有一个线程
+    /// 根据 `path` 加载一个新的 ELF 文件并执行。目前要求原进程仅有一个线程
     pub fn exec(&self, path: String, args: Vec<String>) -> Result<()> {
         let mut inner = self.inner();
         assert_eq!(inner.thread_count(), 1);
-        Loader::load(&mut inner, path, args)
+        Loader::load(&mut inner, path, args)?;
+        // TODO: 这边是暂时的 Hack。
+        // 因为 Loader::load() 并不改变 root_ppn，
+        // 在 run_tasks() 中 memory.activate() 时，页表实际上不会刷新
+        inner.memory_set.page_table.flush_tlb(None);
+        Ok(())
     }
 
     // TODO: 这个不是正确实现的，注意
@@ -136,10 +165,6 @@ pub struct ProcessControlBlockInner {
 }
 
 impl ProcessControlBlockInner {
-    pub fn user_token(&self) -> usize {
-        self.memory_set.token()
-    }
-
     pub fn alloc_fd(&mut self) -> usize {
         self.alloc_fd_from(0)
     }
@@ -214,4 +239,79 @@ impl Default for ProcessControlBlockInner {
             sig_handlers: SignalHandlers::new(),
         }
     }
+}
+
+/// 检查一个用户指针的可读性以及是否有 U 标记
+///
+/// TODO: 目前只检查了一页的有效性，如果结构体跨多页，则可能有问题
+#[track_caller]
+pub unsafe fn check_ptr<'a, T>(ptr: *const T) -> Result<&'a T> {
+    let va = VirtAddr::from(ptr);
+    let pt = curr_page_table();
+    if let Some(pte) = pt.find_pte(va.vpn()) {
+        if pte.flags().contains(PTEFlags::R | PTEFlags::U) {
+            return Ok(unsafe { &*ptr });
+        }
+    }
+    return Err(code::EFAULT);
+}
+
+/// 检查一个指向连续切片的指针（如字符串）的可读性以及是否有 U 标志
+/// 检查一个用户指针的可写性以及是否有 U 标记
+///
+/// TODO: 目前只检查了一页的有效性，如果结构体跨多页，则可能有问题
+#[track_caller]
+pub unsafe fn check_ptr_mut<'a, T>(ptr: *mut T) -> Result<&'a mut T> {
+    let va = VirtAddr::from(ptr);
+    let pt = curr_page_table();
+    if let Some(pte) = pt.find_pte(va.vpn()) {
+        if pte.flags().contains(PTEFlags::R | PTEFlags::U) {
+            return Ok(unsafe { &mut *ptr });
+        }
+    }
+    return Err(code::EFAULT);
+}
+
+///
+/// TODO: 目前单纯是检查了下切片头部，未来可以根据长度计算是否跨等检查
+#[track_caller]
+pub unsafe fn check_slice<'a, T>(ptr: *const T, len: usize) -> Result<&'a [T]> {
+    let va = VirtAddr::from(ptr);
+    let pt = curr_page_table();
+    if let Some(pte) = pt.find_pte(va.vpn()) {
+        if pte.flags().contains(PTEFlags::R | PTEFlags::U) {
+            return Ok(unsafe { core::slice::from_raw_parts(ptr, len) });
+        }
+    }
+    return Err(code::EFAULT);
+}
+
+/// 检查一个指向连续切片的指针（如字符串）的可写性以及是否有 U 标志
+///
+/// TODO: 目前单纯是检查了下切片头部，未来可以根据长度计算是否跨等检查
+#[track_caller]
+pub unsafe fn check_slice_mut<'a, T>(ptr: *mut T, len: usize) -> Result<&'a mut [T]> {
+    let va = VirtAddr::from(ptr);
+    let pt = curr_page_table();
+    if let Some(pte) = pt.find_pte(va.vpn()) {
+        if pte.flags().contains(PTEFlags::R | PTEFlags::U) {
+            return Ok(unsafe { core::slice::from_raw_parts_mut(ptr, len) });
+        }
+    }
+    return Err(code::EFAULT);
+}
+
+/// 检查 null-terminated 的字符串指针（只读和 U 标志）
+///
+/// TODO: 目前只检查了字符串开头，未来应当根据跨页检查
+#[track_caller]
+pub unsafe fn check_cstr<'a>(ptr: *const u8) -> Result<&'a str> {
+    let va = VirtAddr::from(ptr);
+    let pt = curr_page_table();
+    if let Some(pte) = pt.find_pte(va.vpn()) {
+        if pte.flags().contains(PTEFlags::R | PTEFlags::U) {
+            return Ok(unsafe { core::ffi::CStr::from_ptr(ptr as _).to_str().unwrap() });
+        }
+    }
+    return Err(code::EFAULT);
 }

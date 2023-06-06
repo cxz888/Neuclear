@@ -2,7 +2,7 @@
 
 extern crate alloc;
 
-use alloc::{string::String, sync::Arc, vec::Vec};
+use alloc::{string::String, vec::Vec};
 use drivers::{block_cache_sync_all, get_block_cache, BlockDevice, BLOCK_SIZE};
 use fatfs::{
     Dir, Error, File, FileSystem, FsOptions, IoBase, LossyOemCpConverter, NullTimeProvider, Read,
@@ -19,7 +19,7 @@ pub struct Fat32 {
 }
 
 impl Fat32 {
-    pub fn new(device: Arc<dyn BlockDevice>) -> Self {
+    pub fn new(device: &'static dyn BlockDevice) -> Self {
         let fs = FileSystem::new(
             DiskDriver {
                 device,
@@ -97,11 +97,8 @@ impl Entry for Fat32Entry {
     ///
     /// 若当前节点不是目录，或者寻找过程中发生底层错误，则返回错误
     fn find(&self, name: &str) -> Result<Option<Self>, VfsError> {
-        let dir = match self {
-            Fat32Entry::Dir(dir) => dir,
-            Fat32Entry::File(_) => {
-                return Err(VfsError::InvalidType);
-            }
+        let Fat32Entry::Dir(dir) = self else {
+            return Err(VfsError::InvalidType);
         };
         for entry in dir.iter() {
             let entry = entry.map_err(|e| VfsError::FsError(e))?;
@@ -150,7 +147,7 @@ impl Entry for Fat32Entry {
 ///
 /// TODO: 由于目前没有什么好的手段确定磁盘的总大小，假定读入时不会超过总大小
 pub struct DiskDriver {
-    device: Arc<dyn BlockDevice>,
+    device: &'static dyn BlockDevice,
     block_id: u64,
     block_offset: u32,
 }
@@ -163,7 +160,7 @@ impl Read for DiskDriver {
         let mut tot_nread = 0;
         let tot = buf.len();
         while tot_nread < tot {
-            let nread = get_block_cache(self.block_id, Arc::clone(&self.device))
+            let nread = get_block_cache(self.block_id, self.device)
                 .lock()
                 .read(self.block_offset, &mut buf[tot_nread..]);
             self.block_offset += nread;
@@ -182,7 +179,7 @@ impl Write for DiskDriver {
         let mut tot_nwrite = 0;
         let tot = buf.len();
         while tot_nwrite < tot {
-            let nwrite = get_block_cache(self.block_id, Arc::clone(&self.device))
+            let nwrite = get_block_cache(self.block_id, self.device)
                 .lock()
                 .write(self.block_offset, &buf[tot_nwrite..]);
             self.block_offset += nwrite;

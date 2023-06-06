@@ -4,12 +4,14 @@ const MB: usize = 1024 * 1024;
 
 /// 物理内存的末端
 pub const MEMORY_END: usize = 0x8800_0000;
+/// 物理内存的估算大小，只大不小
+pub const MEMORY_SIZE: usize = 0x800_0000;
 
 /// 内核地址空间中，虚拟地址相对于物理地址的偏移量
 pub const PA_TO_VA: usize = 0xFFFF_FFFF_0000_0000;
 
 /// 内核栈大小
-pub const KERNEL_STACK_SIZE: usize = 80 * KB;
+pub const KERNEL_STACK_SIZE: usize = 16 * PAGE_SIZE;
 /// 内核堆大小
 pub const KERNEL_HEAP_SIZE: usize = 32 * MB;
 

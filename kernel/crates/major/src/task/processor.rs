@@ -54,7 +54,10 @@ pub fn run_tasks() -> ! {
         let idle_task_ctx_ptr;
         let next_task_ctx_ptr;
 
-        let task = fetch_task().expect("No more tasks avaliable.");
+        // 非初赛测试情况下，没有任务就可以退出操作系统了
+        let task = fetch_task().expect("No more tasks available.");
+
+        // log::debug!("exec ok");
 
         // 准备新任务的 task ctx
         {
@@ -78,31 +81,30 @@ pub fn run_tasks() -> ! {
 }
 
 /// Get current task through take, leaving a None in its place
-pub fn take_current_task() -> Option<Arc<ThreadControlBlock>> {
+pub fn take_curr_task() -> Option<Arc<ThreadControlBlock>> {
     PROCESSOR.exclusive_access().take_current()
 }
 
 /// Get a copy of the current task
-pub fn current_task() -> Option<Arc<ThreadControlBlock>> {
+pub fn curr_task() -> Option<Arc<ThreadControlBlock>> {
     PROCESSOR.exclusive_access().current()
 }
 
-pub fn current_process() -> Arc<ProcessControlBlock> {
-    current_task().unwrap().process.upgrade().unwrap()
+pub fn curr_process() -> Arc<ProcessControlBlock> {
+    curr_task().unwrap().process.upgrade().unwrap()
 }
 
-/// 注意，会借用当前线程
 #[track_caller]
-pub fn current_page_table() -> PageTable {
-    // TODO: 取得当前线程的 satp 可以直接读 satp 寄存器
-    let task = current_task().unwrap();
-    PageTable::from_token(task.user_token())
+pub fn curr_page_table() -> PageTable {
+    // NOTE: 这里取得当前页表是直接读的 satp，是否要注意互斥之类的？
+    let satp = riscv::register::satp::read();
+    PageTable::from_token(satp.bits())
 }
 
 /// 需要保证 TrapContext 的引用 non-alias
 #[track_caller]
-pub unsafe fn current_trap_ctx() -> &'static mut TrapContext {
-    current_task().unwrap().inner().trap_ctx()
+pub unsafe fn curr_trap_ctx() -> &'static mut TrapContext {
+    curr_task().unwrap().inner().trap_ctx()
 }
 
 /// 返回 idle 控制流（也就是 `run_tasks` 函数中），以便进行调度

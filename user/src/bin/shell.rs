@@ -28,6 +28,9 @@ pub fn main() -> i32 {
             LF | CR => {
                 println!("");
                 if !line.is_empty() {
+                    if line == "exit" {
+                        return 0;
+                    }
                     let args: Vec<_> = line.as_str().split(' ').collect();
                     let mut args_copy: Vec<String> = args
                         .iter()

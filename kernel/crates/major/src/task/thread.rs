@@ -11,7 +11,7 @@ use utils::upcell::UPSafeCell;
 
 /// 进程控制块
 ///
-/// TODO: tid 一般而言是不变的，那么是否可以放在这个结构里，而非在 Inner 中和 res 绑一块？
+/// TODO: tid 一般而言是不变的，那么是否可以放在这个结构里，而非在 Inner 中和 res 绑一块？目前是因为用户栈的位置取决于 tid 所以放在 res 里
 pub struct ThreadControlBlock {
     pub process: Weak<ProcessControlBlock>,
     tcb_inner: UPSafeCell<ThreadControlBlockInner>,
@@ -24,16 +24,44 @@ impl ThreadControlBlock {
     pub fn new(process: &Arc<ProcessControlBlock>) -> Self {
         let res = ThreadUserRes::new(process);
         let kernel_stack = kstack_alloc();
-        let trap_ctx = kernel_stack.trap_ctx_addr();
+        let kstack_ptr = kernel_stack.trap_ctx_addr();
         Self {
             process: Arc::downgrade(process),
             tcb_inner: unsafe {
                 UPSafeCell::new(ThreadControlBlockInner {
                     kernel_stack,
                     res: Some(res),
-                    task_ctx: TaskContext::goto_restore(trap_ctx),
+                    task_ctx: TaskContext::goto_restore(kstack_ptr),
                     thread_status: ThreadStatus::Ready,
                     exit_code: None,
+                    clear_child_tid: 0,
+                    sig_receiver: SignalReceiver::new(),
+                })
+            },
+        }
+    }
+
+    /// fork 时用到，从一个已有的 tcb 中复制出来一个。
+    ///
+    /// 但是内核栈会重新申请
+    pub fn from_existed(other: &Self, process: &Arc<ProcessControlBlock>) -> Self {
+        let other_inner = other.inner();
+        let res = Some(ThreadUserRes {
+            tid: other_inner.res.as_ref().unwrap().tid,
+            process: Arc::downgrade(process),
+        });
+        let kernel_stack = kstack_alloc();
+        let kstack_ptr = kernel_stack.trap_ctx_addr();
+        Self {
+            process: Arc::downgrade(process),
+            tcb_inner: unsafe {
+                UPSafeCell::new(ThreadControlBlockInner {
+                    kernel_stack,
+                    res,
+                    task_ctx: TaskContext::goto_restore(kstack_ptr),
+                    thread_status: ThreadStatus::Ready,
+                    exit_code: None,
+                    // TODO: 这些东西要不要复制？待考虑
                     clear_child_tid: 0,
                     sig_receiver: SignalReceiver::new(),
                 })
@@ -44,13 +72,6 @@ impl ThreadControlBlock {
     #[track_caller]
     pub fn inner(&self) -> RefMut<'_, ThreadControlBlockInner> {
         self.tcb_inner.exclusive_access()
-    }
-
-    #[track_caller]
-    pub fn user_token(&self) -> usize {
-        let process = self.process.upgrade().unwrap();
-        let inner = process.inner();
-        inner.memory_set.token()
     }
 }
 

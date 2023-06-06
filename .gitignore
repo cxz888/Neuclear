@@ -1,2 +1,4 @@
 /res/*
 !/res/*.png
+kernel-qemu
+sbi-qemu

@@ -1,10 +1,9 @@
 use super::{File, Stat, StatMode};
-use alloc::{string::String, sync::Arc, vec::Vec};
+use alloc::{string::String, vec::Vec};
 use bitflags::bitflags;
 use drivers::{BLOCK_DEVICE, BLOCK_SIZE};
 use fat32::{Fat32, Fat32Entry};
 use lazy_static::lazy_static;
-use memory::UserBuffer;
 use utils::{
     error::{code, Result},
     upcell::UPSafeCell,
@@ -52,17 +51,8 @@ impl InodeFile {
 lazy_static! {
     /// The root of all inodes, or '/' in short
     pub static ref VIRTUAL_FS: Vfs = {
-        Vfs::new(Arc::clone(&BLOCK_DEVICE))
+        Vfs::new(&*BLOCK_DEVICE)
     };
-}
-
-/// List all files in the filesystems
-pub fn list_apps() {
-    println!("/**** APPS ****");
-    for app in VIRTUAL_FS.root_dir().ls().unwrap() {
-        println!("{}", app);
-    }
-    println!("**************/");
 }
 
 bitflags! {
@@ -127,7 +117,7 @@ impl File for InodeFile {
     fn writable(&self) -> bool {
         self.writable
     }
-    fn read(&self, mut _buf: UserBuffer) -> usize {
+    fn read(&self, mut _buf: &mut [u8]) -> usize {
         todo!()
         // let mut inner = self.inner.exclusive_access();
         // let mut total_read_size = 0usize;
@@ -141,7 +131,7 @@ impl File for InodeFile {
         // }
         // total_read_size
     }
-    fn write(&self, _buf: UserBuffer) -> usize {
+    fn write(&self, _buf: &[u8]) -> usize {
         todo!()
         // let mut inner = self.inner.exclusive_access();
         // let mut total_write_size = 0usize;
@@ -222,7 +212,7 @@ pub fn open_inode(path: String, flags: OpenFlags) -> Result<InodeFile> {
     if flags.contains(OpenFlags::O_DIRECTORY) && !curr.is_dir() {
         return Err(code::ENOTDIR);
     }
-    if flags.contains(OpenFlags::O_TRUNC) && flags.read_write().1 {
+    if flags.contains(OpenFlags::O_TRUNC) && writable {
         curr.clear();
     }
     Ok(InodeFile::new(path, readable, writable, curr))

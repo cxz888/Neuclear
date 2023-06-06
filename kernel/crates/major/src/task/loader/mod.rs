@@ -17,7 +17,7 @@ use goblin::elf::{
     program_header::{PF_R, PF_W, PF_X, PT_LOAD},
     Elf,
 };
-use memory::{MapArea, MapPermission, MapType, MemorySet, PageTable, VirtAddr, KERNEL_SPACE};
+use memory::{MapArea, MapPermission, MapType, MemorySet, PageTable, VirtAddr};
 use utils::config::PAGE_SIZE;
 use utils::error::Result;
 
@@ -59,9 +59,80 @@ impl Loader {
         let elf_data = app_inode.read_all();
         let elf = Elf::parse(&elf_data).expect("should be valid elf");
 
-        // FIXME: 这个清空如何做有待商榷，页表用的帧要不要回收？
-        pcb.memory_set.recycle_data_pages();
-        MemorySet::new_user(&KERNEL_SPACE.exclusive_access().page_table);
+        pcb.memory_set.recycle_user_pages();
+        // 清空信号模块
+        pcb.sig_handlers.clear();
+        pcb.main_thread().inner().sig_receiver.clear();
+
+        // 清理那些设置了 CLOEXEC 标志的文件
+        for fd in &mut pcb.fd_table {
+            if let Some(fd_inner) = fd && fd_inner.status().contains(OpenFlags::O_CLOEXEC) {
+                fd.take();
+            }
+        }
+
+        // 映射 ELF 中所有段
+        assert!(elf.is_64);
+        log::debug!("e_flags: {:#b}", elf.header.e_flags);
+        // 确认是可执行文件
+        assert_eq!(elf.header.e_type, ET_EXEC);
+        // 确定是 RISC-V 执行环境
+        assert_eq!(elf.header.e_machine, 243);
+        log::info!("entry point: {:#x}", elf.entry);
+
+        let (_elf_base, elf_end) = load_sections(&elf, &elf_data, &mut pcb.memory_set);
+
+        // program break 紧挨在 ELF 数据之后，并在之后向高地址增长
+        pcb.brk = elf_end;
+        pcb.heap_start = VirtAddr(elf_end).vpn();
+
+        // 为线程分配资源
+        let thread = pcb.main_thread();
+        let mut thread_inner = thread.inner();
+        let user_res = thread_inner.res.as_mut().unwrap();
+        user_res.alloc_user_res(&mut pcb.memory_set);
+        let sp = user_res.user_stack_high_addr();
+
+        // 在用户栈上推入参数、环境变量、辅助向量等
+        let new_token = pcb.memory_set.token();
+        let pt = PageTable::from_token(new_token);
+        let sp_kernel_va = 0;
+        let mut stack_init = StackInit {
+            sp,
+            sp_kernel_va,
+            pt,
+        };
+        let info_block = InfoBlock {
+            args,
+            envs: Vec::new(),
+            auxv: vec![(AT_PAGESZ, PAGE_SIZE)],
+        };
+        let argv_base = stack_init.init_stack(info_block);
+
+        // 初始化 trap_ctx
+        let mut trap_ctx = TrapContext::app_init_context(elf.entry as usize, stack_init.sp);
+        trap_ctx.x[10] = argc;
+        trap_ctx.x[11] = argv_base;
+        unsafe {
+            *thread_inner.trap_ctx() = trap_ctx;
+        }
+        Ok(())
+    }
+
+    /// TODO: 未来应该要改成这个接口，废除原来的 load 最好
+    pub fn load_elf(
+        pcb: &mut ProcessControlBlockInner,
+        name: String,
+        args: Vec<String>,
+        elf_data: &[u8],
+    ) -> Result<()> {
+        let argc = args.len();
+        log::info!("name: {name}, args: {args:?}");
+
+        // 读取和解析 ELF 内容
+        let elf = Elf::parse(elf_data).expect("should be valid elf");
+
+        pcb.memory_set.recycle_user_pages();
         // 清空信号模块
         pcb.sig_handlers.clear();
         pcb.main_thread().inner().sig_receiver.clear();
@@ -161,11 +232,12 @@ fn load_sections(elf: &Elf, elf_data: &[u8], memory_set: &mut MemorySet) -> (usi
             // FIXME: 非常见鬼。在加载 elf 时，莫名其妙导致一部分数据没有加载进去（表现为全 0）。
             // 结果是重复运行任务时，有未加载的指令。怀疑可能是缓存的问题，但暂时不知道如何解决。
             // 去掉下面这个 log 可以复现
+            // TODO: 底层换了很多实现后，这个 bug 也不知道还在不在，后续要测一下
             log::debug!("file range: {:#x?}", ph.file_range());
             elf_end = map_area.vpn_range.end.page_start().0.max(elf_end);
             memory_set.push(map_area, start_offset, Some(&elf_data[ph.file_range()]));
 
-            log::debug!("map_perm: {:?}", map_perm);
+            // log::debug!("map_perm: {:?}", map_perm);
         }
     }
     (elf_base as usize, elf_end)

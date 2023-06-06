@@ -1,11 +1,11 @@
-use crate::task::{__block_current_and_run_next, add_timer, current_task};
+use crate::task::{__block_curr_and_run_next, add_timer, curr_task};
 use utils::{error::Result, time::get_time_ms};
 
 pub fn sys_sleep(ms: usize) -> Result {
     let expire_ms = get_time_ms() + ms;
-    let thread = current_task().unwrap();
+    let thread = curr_task().unwrap();
     add_timer(expire_ms, thread);
-    __block_current_and_run_next();
+    __block_curr_and_run_next();
     Ok(0)
 }
 
