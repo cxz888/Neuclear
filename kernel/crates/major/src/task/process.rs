@@ -55,6 +55,7 @@ impl ProcessControlBlock {
     }
 
     // TODO: 这个接口未来也许可以确定下来，代替 new() 之类的，看下面的 _spawn()
+    #[allow(unused)]
     pub fn from_elf(name: String, args: Vec<String>, elf_data: &[u8]) -> Result<Arc<Self>> {
         let pcb = ProcessControlBlock::new();
         {
@@ -127,15 +128,16 @@ impl ProcessControlBlock {
     }
 
     // TODO: 这个不是正确实现的，注意
-    pub fn _spawn(self: &Arc<Self>, _elf_data: &[u8]) -> isize {
+    pub fn _spawn(self: &Arc<Self>, name: String) -> isize {
         // TODO: PCB::new() 这个接口似乎可以废除，加上一个加载 elf 的接口
-        let child = Self::new();
+        let child = Self::from_path(name.clone(), vec![name]).unwrap();
         let mut parent_inner = self.inner();
         parent_inner.children.push(Arc::clone(&child));
 
         let mut child_inner = child.inner();
         child_inner.fd_table = parent_inner.fd_table.clone();
         child_inner.parent = Arc::downgrade(self);
+        add_task(child_inner.main_thread());
 
         child.pid.0 as isize
     }

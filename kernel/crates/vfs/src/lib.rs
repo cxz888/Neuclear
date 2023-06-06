@@ -23,8 +23,10 @@ pub trait Entry {
     fn is_dir(&self) -> bool;
     fn is_file(&self) -> bool;
     fn ls(&self) -> Result<Vec<String>, Error<Self::FsError>>;
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error<Self::FsError>>;
     /// 读取一个文件的所有数据
     fn read_all(&mut self) -> Result<Vec<u8>, Error<Self::FsError>>;
+    fn write(&mut self, buf: &[u8]) -> Result<usize, Error<Self::FsError>>;
     /// 在当前目录下寻找一个文件或目录
     fn find(&self, name: &str) -> Result<Option<Self>, Error<Self::FsError>>
     where

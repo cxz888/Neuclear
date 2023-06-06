@@ -32,6 +32,7 @@ impl TaskManager {
 lazy_static! {
     pub static ref TASK_MANAGER: UPSafeCell<TaskManager> = unsafe {
         let mut task_manager = TaskManager::new();
+        #[cfg(not(feature = "test"))]
         task_manager.add(INITPROC.inner().main_thread());
         UPSafeCell::new(task_manager)
     };

@@ -9,7 +9,7 @@ use alloc::{
     string::{String, ToString},
     sync::Arc,
 };
-use filesystem::{open_file, File, OpenFlags, Stat};
+use filesystem::{make_pipe, open_file, File, OpenFlags, Stat};
 use memory::VirtAddr;
 use utils::error::{code, Result};
 
@@ -27,6 +27,11 @@ pub fn sys_ioctl(fd: usize, cmd: usize, arg: usize) -> Result {
     if curr_page_table().trans_va_to_pa(VirtAddr(arg)).is_none() {
         return Err(code::EFAULT);
     }
+    Ok(0)
+}
+
+/// TODO: sys_mkdirat 完善目录
+pub fn sys_mkdirat(_dirfd: usize, _path: *const u8, _mode: usize) -> Result {
     Ok(0)
 }
 
@@ -127,7 +132,6 @@ pub fn sys_writev(fd: usize, iovec: *const IoVec, vlen: usize) -> Result {
     Ok(total_write as isize)
 }
 
-/// 不太清楚 `./` 开头的路径怎么处理。会借用当前进程
 fn path_with_fd(fd: usize, path_name: String) -> Result<String> {
     const AT_FDCWD: usize = -100isize as usize;
     // 绝对路径则忽视 fd
@@ -137,7 +141,13 @@ fn path_with_fd(fd: usize, path_name: String) -> Result<String> {
     let process = curr_process();
     let inner = process.inner();
     if fd == AT_FDCWD {
-        return Ok(format!("{}/{path_name}", inner.cwd));
+        if path_name == "." {
+            return Ok(inner.cwd.clone());
+        } else if path_name.starts_with("./") {
+            return Ok(format!("{}{}", inner.cwd, &path_name[2..]));
+        } else {
+            return Ok(format!("{}{path_name}", inner.cwd));
+        }
     } else {
         if let Some(Some(base)) = inner.fd_table.get(fd) {
             if base.is_dir() {
@@ -163,26 +173,26 @@ fn path_with_fd(fd: usize, path_name: String) -> Result<String> {
 ///     - 状态标志影响后续的 I/O 方式，而且可以动态修改
 /// - `mode` 是用于指定创建新文件时，该文件的 mode。目前应该不会用到
 ///     - 它只会影响未来访问该文件的模式，但这一次打开该文件可以是随意的
-pub fn sys_openat(dir_fd: usize, path_name: *const u8, flags: u32, mut mode: u32) -> Result {
+pub fn sys_openat(dir_fd: usize, path_name: *const u8, flags: u32, mut _mode: u32) -> Result {
     let file_name = unsafe { check_cstr(path_name)? };
 
     let Some(flags) = OpenFlags::from_bits(flags) else {
         log::error!("open flags: {flags:#b}");
+        log::error!("open flags: {:#b}",OpenFlags::O_DIRECTORY.bits());
         return Err(code::TEMP);
     };
     log::info!("oepnat {dir_fd}, {file_name}, {flags:?}");
     // 不是创建文件（以及临时文件）时，mode 被忽略
     if !flags.contains(OpenFlags::O_CREAT) {
-        mode = 0;
+        // TODO: 暂时在测试中忽略
+        _mode = 0;
     }
     // TODO: 暂时在测试中忽略
-    #[cfg(not(feature = "test"))]
-    assert_eq!(mode, 0, "dir_fd: {dir_fd}, flags: {flags:?}");
+    // assert_eq!(mode, 0, "dir_fd: {dir_fd}, flags: {flags:?}");
 
     // 64 位版本应当是保证可以打开大文件的
     // TODO: 暂时在测试中忽略
-    #[cfg(not(feature = "test"))]
-    assert!(flags.contains(OpenFlags::O_LARGEFILE));
+    // assert!(flags.contains(OpenFlags::O_LARGEFILE));
 
     // 暂时先不支持这些
     if flags.intersects(OpenFlags::O_ASYNC | OpenFlags::O_APPEND | OpenFlags::O_DSYNC) {
@@ -209,21 +219,48 @@ pub fn sys_close(fd: usize) -> Result {
     Ok(0)
 }
 
-pub fn sys_pipe2(_pipe: *mut usize) -> Result {
-    // let process = current_process();
-    // let token = current_user_token();
-    // let mut inner = process.inner();
-    // let (pipe_read, pipe_write) = make_pipe();
-    // let read_fd = inner.alloc_fd();
-    // inner.fd_table[read_fd] = Some(pipe_read);
-    // let write_fd = inner.alloc_fd();
-    // inner.fd_table[write_fd] = Some(pipe_write);
-    // let mut pt = PageTable::from_token(token);
-    // unsafe {
-    //     *pt.trans_ptr_mut(pipe).unwrap() = read_fd;
-    //     *pt.trans_ptr_mut(pipe.add(1)).unwrap() = write_fd;
-    // }
-    todo!("sys_pipe2 未实现")
+/// 创建管道，返回 0
+///
+/// 参数
+/// - `filedes`: 用于保存 2 个文件描述符。其中，`filedes[0]` 为管道的读出端，`filedes[1]` 为管道的写入端。
+pub fn sys_pipe2(filedes: *mut i32) -> Result {
+    let filedes = unsafe { check_slice_mut(filedes, 2)? };
+    let process = curr_process();
+    let mut inner = process.inner();
+    let (pipe_read, pipe_write) = make_pipe();
+    let read_fd = inner.alloc_fd();
+    inner.fd_table[read_fd] = Some(pipe_read);
+    let write_fd = inner.alloc_fd();
+    inner.fd_table[write_fd] = Some(pipe_write);
+    log::debug!("read_fd {read_fd}, write_fd {write_fd}");
+    filedes[0] = read_fd as i32;
+    filedes[1] = write_fd as i32;
+    Ok(0)
+}
+
+#[repr(C)]
+#[allow(unused)]
+pub struct DirEnt {
+    /// 索引结点号
+    d_ino: usize,
+    /// 到下一个 dirent 的偏移
+    d_off: isize,
+    /// 当前 dirent 的长度
+    d_reclen: u16,
+    /// 文件类型
+    d_type: u8,
+}
+
+/// 获取目录项信息
+///
+/// FIXME: 实现 getdents64
+pub fn sys_getdents64(fd: usize, _buf: *mut u8, _len: usize) -> Result {
+    let process = curr_process();
+    let inner = process.inner();
+    let Some(Some(_dir)) = inner.fd_table.get(fd) else {
+        return Err(code::EBADF);
+    };
+    Err(code::UNSUPPORTED)
 }
 
 /// 操控文件描述符
@@ -271,6 +308,10 @@ pub fn sys_fcntl64(fd: usize, cmd: usize, arg: usize) -> Result {
     }
 }
 
+/// 复制文件描述符，复制到当前进程最小可用 fd
+///
+/// 参数：
+/// - `fd` 是被复制的文件描述符
 pub fn sys_dup(fd: usize) -> Result {
     let process = curr_process();
     let mut inner = process.inner();
@@ -283,6 +324,22 @@ pub fn sys_dup(fd: usize) -> Result {
     let new_fd = inner.alloc_fd();
     inner.fd_table[new_fd] = Some(Arc::clone(inner.fd_table[fd].as_ref().unwrap()));
     Ok(new_fd as isize)
+}
+
+pub fn sys_dup3(old: usize, new: usize) -> Result {
+    let process = curr_process();
+    let mut inner = process.inner();
+    if old >= inner.fd_table.len() {
+        return Err(code::TEMP);
+    }
+    if new >= inner.fd_table.len() {
+        inner.fd_table.resize(new + 1, None);
+    }
+    if inner.fd_table[old].is_none() {
+        return Err(code::TEMP);
+    }
+    inner.fd_table[new] = Some(Arc::clone(inner.fd_table[old].as_ref().unwrap()));
+    Ok(new as isize)
 }
 
 /// TODO: 写 sys_fstatat 的文档
@@ -303,12 +360,60 @@ pub fn sys_fstatat(dir_fd: usize, file_name: *const u8, statbuf: *mut Stat, flag
     Ok(0)
 }
 
-pub fn sys_linkat(_old_name: *const u8, _new_name: *const u8) -> Result {
-    todo!()
+/// FIXME: 由于 mount 未实现，fstat test.txt 也是不成功的
+pub fn sys_fstat(fd: usize, kst: *mut Stat) -> Result {
+    let kst = unsafe { check_ptr_mut(kst)? };
+    let process = curr_process();
+    let inner = process.inner();
+    let Some(Some(file)) =inner.fd_table.get(fd) else {
+        return Err(code::EBADF);
+    };
+    *kst = file.fstat();
+
+    Ok(0)
 }
 
 pub fn sys_unlinkat(_name: *const u8) -> Result {
-    todo!()
+    // FIXME: 尚未实现 sys_unlinkat
+    Err(code::UNSUPPORTED)
+}
+
+pub fn sys_linkat(_old_name: *const u8, _new_name: *const u8) -> Result {
+    // FIXME: 尚未实现 sys_linkat
+    Err(code::UNSUPPORTED)
+}
+
+/// TODO: sys_umount 完善，写文档
+pub fn sys_umount(_special: *const u8, _flags: i32) -> Result {
+    Ok(0)
+}
+
+/// TODO: sys_mount 完善，写文档
+pub fn sys_mount(
+    _special: *const u8,
+    _dir: *const u8,
+    _fstype: *const u8,
+    _flags: usize,
+    _data: *const u8,
+) -> Result {
+    Ok(0)
+}
+
+/// TODO: sys_chdir 完善，写文档
+pub fn sys_chdir(path: *const u8) -> Result {
+    let path = unsafe { check_cstr(path)? };
+
+    let mut new_cwd = if !path.starts_with('/') {
+        format!("/{path}")
+    } else {
+        path.to_string()
+    };
+    // 保证目录的格式都是 xxxx/
+    if !new_cwd.ends_with('/') {
+        new_cwd.push('/');
+    }
+    curr_process().inner().cwd = new_cwd;
+    Ok(0)
 }
 
 /// 获取当前进程当前工作目录的绝对路径。

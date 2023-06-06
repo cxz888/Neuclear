@@ -102,7 +102,6 @@ impl PipeRingBuffer {
 }
 
 /// 返回 (read_end, write_end)
-#[allow(unused)]
 pub fn make_pipe() -> (Arc<Pipe>, Arc<Pipe>) {
     let buffer = unsafe { Arc::new(UPSafeCell::new(PipeRingBuffer::new())) };
     let read_end = Arc::new(Pipe::read_end_with_buffer(Arc::clone(&buffer)));

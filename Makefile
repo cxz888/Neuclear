@@ -27,6 +27,7 @@ env:
 
 kernel:
 ifeq ($(MODE), test)
+	@cp -r kernel/cargo-config kernel/.cargo
 	@cd kernel && cargo build --package major --release --features test
 else
 	@cd kernel && cargo build --package major --release

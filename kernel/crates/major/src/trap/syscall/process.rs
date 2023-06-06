@@ -168,7 +168,8 @@ pub fn sys_wait4(pid: isize, wstatus: *mut i32, options: usize, rusage: usize) -
                 assert_eq!(Arc::strong_count(&child), 1);
                 let found_pid = child.pid();
                 let exit_code = child.inner().exit_code;
-                unsafe {
+                if !wstatus.is_null() {
+                    let wstatus = unsafe { check_ptr_mut(wstatus)? };
                     // *wstatus 的构成，可能要参考 WEXITSTATUS 那几个宏
                     *wstatus = exit_code << 8;
                 }
@@ -234,6 +235,25 @@ pub fn sys_setpriority(_prio: isize) -> Result {
     todo!()
 }
 
+#[repr(C)]
+pub struct Tms {
+    tms_utime: usize,
+    tms_stime: usize,
+    tms_cutime: usize,
+    tms_cstime: usize,
+}
+
+/// FIXME: sys_times 暂时是非正确的实现
+pub fn sys_times(tms: *mut Tms) -> Result {
+    let ticks = riscv::register::time::read();
+    let tms = unsafe { check_ptr_mut(tms)? };
+    tms.tms_utime = ticks / 4;
+    tms.tms_stime = ticks / 4;
+    tms.tms_cutime = ticks / 4;
+    tms.tms_cstime = ticks / 4;
+    Ok(0)
+}
+
 /// 映射虚拟内存。返回实际映射的地址。
 ///
 /// `addr` 若是 NULL，那么内核会自动选择一个按页对齐的地址进行映射，这也是比较可移植的方式。
@@ -260,7 +280,7 @@ pub fn sys_mmap(addr: usize, len: usize, prot: u32, flags: u32, fd: i32, offset:
     log::debug!("addr: {addr}");
     log::debug!("len: {len}");
 
-    if VirtAddr(addr).page_offset() != 0 || VirtAddr(len).page_offset() != 0 || len == 0 {
+    if VirtAddr(addr).page_offset() != 0 || len == 0 {
         return Err(code::EINVAL);
     }
     let Some(prot) = MmapProt::from_bits(prot) else {
@@ -297,11 +317,13 @@ pub fn sys_mmap(addr: usize, len: usize, prot: u32, flags: u32, fd: i32, offset:
         );
     }
 
-    todo!("其他映射尚未实现")
+    // FIXME: "其他映射尚未实现"
+    return Err(code::UNSUPPORTED);
 }
 
 pub fn sys_munmap(_addr: usize, _len: usize) -> Result {
-    todo!()
+    // todo!()
+    Ok(0)
 }
 
 pub fn sys_spawn(_path: *const u8) -> Result {

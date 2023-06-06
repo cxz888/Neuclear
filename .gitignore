@@ -1,4 +1,5 @@
 /res/*
 !/res/*.png
+!/res/rustsbi-qemu.bin
 kernel-qemu
 sbi-qemu

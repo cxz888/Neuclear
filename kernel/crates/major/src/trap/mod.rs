@@ -50,8 +50,9 @@ pub fn __trap_handler() {
     log::trace!("pid {}: pc-{:#x}", curr_process().pid.0, unsafe {
         curr_trap_ctx().sepc
     });
-    log::debug!("Trap happened {:?}", scause.cause());
+    log::trace!("Trap happened {:?}", scause.cause());
     let stval = stval::read();
+    check_timer();
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
             // jump to next instruction anyway

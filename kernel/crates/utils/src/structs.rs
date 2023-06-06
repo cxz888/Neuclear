@@ -24,12 +24,14 @@ fn str_to_bytes(info: &str) -> [u8; 65] {
 impl Default for UtsName {
     fn default() -> Self {
         Self {
-            sysname: str_to_bytes("Granite"),
-            nodename: str_to_bytes("Granite - machine[0]"),
+            sysname: str_to_bytes("Neuclear"),
+            nodename: str_to_bytes("Neuclear - machine[0]"),
             release: str_to_bytes("null"),
             version: str_to_bytes("0.1"),
             machine: str_to_bytes("qemu"),
-            domainname: str_to_bytes("https://cxz888.xyz"),
+            domainname: str_to_bytes(
+                "https://gitlab.eduxiji.net/202310145101206/oskernel2023-neuclear",
+            ),
         }
     }
 }

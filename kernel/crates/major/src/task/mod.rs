@@ -118,31 +118,37 @@ pub extern "C" fn __exit_curr_and_run_next(exit_code: i32) -> ! {
     unreachable!()
 }
 
-// FIXME: 权宜之计罢了
-#[cfg(feature = "test")]
-static EXEC_TEST_ELF: &[u8] = include_bytes!("../exec_test.elf");
-
 lazy_static! {
     pub static ref INITPROC: Arc<ProcessControlBlock> = {
         #[cfg(feature = "test")]
-        return ProcessControlBlock::from_elf(
-            "exec_test".to_string(),
-            vec!["exec_test".to_string()],
-            EXEC_TEST_ELF,
-        )
-        .expect("INITPROC Failed");
+        {
+            let pcb = ProcessControlBlock::new();
+            pcb.inner()
+                .memory_set
+                .map_kernel_areas(&memory::KERNEL_SPACE.exclusive_access().page_table);
+            pcb
+        }
         #[cfg(not(feature = "test"))]
         ProcessControlBlock::from_path("initproc".to_string(), vec!["initproc".to_string()])
             .expect("INITPROC Failed.")
     };
 }
 
+#[cfg(feature = "test")]
+static ALL_APPS: utils::upcell::UPSafeCell<Vec<alloc::string::String>> =
+    unsafe { utils::upcell::UPSafeCell::new(Vec::new()) };
+
 /// List all files in the filesystems
 pub fn list_apps() {
     println!("/**** APPS ****");
     use vfs::{Entry, Fs};
     for app in filesystem::VIRTUAL_FS.root_dir().ls().unwrap() {
+        #[cfg(feature = "test")]
+        ALL_APPS.exclusive_access().push(app);
+        #[cfg(not(feature = "test"))]
         println!("{}", app);
     }
+    #[cfg(feature = "test")]
+    ALL_APPS.exclusive_access().reverse();
     println!("**************/");
 }

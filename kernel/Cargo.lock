@@ -101,6 +101,7 @@ dependencies = [
  "drivers",
  "fat32",
  "lazy_static",
+ "log",
  "memory",
  "utils",
  "vfs",

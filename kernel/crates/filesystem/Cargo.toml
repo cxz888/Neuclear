@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 bitflags = { workspace = true }
 lazy_static = { workspace = true }
+log = { workspace = true }
 
 memory = { path = "../memory" }
 utils = { path = "../utils" }

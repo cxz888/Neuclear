@@ -28,16 +28,20 @@ macro_rules! declare_syscall_id {
 #[rustfmt::skip]
 declare_syscall_id!(
     GETCWD, 17,
-    DUP, 24,
+    DUP, 23,
+    DUP3, 24,
     FCNTL64, 25,
     IOCTL, 29,
     MKDIRAT, 34,
     UNLINKAT, 35,
     LINKAT, 37,
+    UMOUNT, 39,
+    MOUNT, 40,
     CHDIR, 49,
     OPENAT, 56,
     CLOSE, 57,
     PIPE2, 59,
+    GETDENTS64, 61,
     READ, 63,
     WRITE, 64,
     READV, 65,
@@ -55,6 +59,7 @@ declare_syscall_id!(
     SIGACTION, 134,
     SIGPROCMASK, 135,
     SETPRIORITY, 140,
+    TIMES, 153,
     SETPGID, 154,
     GETPGID, 155,
     UNAME, 160,
@@ -78,23 +83,46 @@ declare_syscall_id!(
 
 /// handle syscall exception with `id` and other arguments
 pub fn syscall(id: usize, args: [usize; 6]) -> isize {
-    log::debug!("syscall {} with args {:x?}", name(id), args);
+    let curr_pid = curr_process().pid.0;
+    // 读入标准输入、写入标准输出、写入标准错误、INITPROC 和 shell 都不关心
+    #[cfg(not(feature = "test"))]
+    if !((id == READ || id == READV) && args[0] == 0
+        || (id == WRITE || id == WRITEV) && (args[0] == 1 || args[0] == 2)
+        || id == PPOLL)
+        && curr_pid != 0
+        && curr_pid != 1
+    {
+        log::debug!("syscall {} with args {:x?}", name(id), args);
+    }
     let ret = match id {
         GETCWD => sys_getcwd(args[0] as _, args[1]),
         DUP => sys_dup(args[0]),
+        DUP3 => sys_dup3(args[0], args[1]),
         FCNTL64 => sys_fcntl64(args[0], args[1], args[2]),
         IOCTL => sys_ioctl(args[0], args[1], args[2]),
+        MKDIRAT => sys_mkdirat(args[0], args[1] as _, args[2]),
         UNLINKAT => sys_unlinkat(args[1] as _),
         LINKAT => sys_linkat(args[1] as _, args[3] as _),
+        UMOUNT => sys_umount(args[0] as _, args[1] as _),
+        MOUNT => sys_mount(
+            args[0] as _,
+            args[1] as _,
+            args[2] as _,
+            args[3],
+            args[4] as _,
+        ),
+        CHDIR => sys_chdir(args[0] as _),
         OPENAT => sys_openat(args[0], args[1] as _, args[2] as _, args[3] as _),
         CLOSE => sys_close(args[0]),
         PIPE2 => sys_pipe2(args[0] as _),
+        GETDENTS64 => sys_getdents64(args[0], args[1] as _, args[2]),
         READ => sys_read(args[0], args[1] as _, args[2]),
         WRITE => sys_write(args[0], args[1] as _, args[2]),
         READV => sys_readv(args[0], args[1] as _, args[2]),
         WRITEV => sys_writev(args[0], args[1] as _, args[2]),
         PPOLL => sys_ppoll(),
         NEWFSTATAT => sys_fstatat(args[0], args[1] as _, args[2] as _, args[3]),
+        NEWFSTAT => sys_fstat(args[0], args[1] as _),
         EXIT | EXIT_GROUP => sys_exit(args[0] as _),
         SET_TID_ADDRESS => sys_set_tid_address(args[0] as _),
         SLEEP => sys_sleep(args[0]),
@@ -103,6 +131,7 @@ pub fn syscall(id: usize, args: [usize; 6]) -> isize {
         SIGACTION => sys_sigaction(args[0], args[1] as _, args[2] as _),
         SIGPROCMASK => sys_sigprocmask(args[0], args[1] as _, args[2] as _, args[3]),
         SETPRIORITY => sys_setpriority(args[0] as _),
+        TIMES => sys_times(args[0] as _),
         SETPGID => sys_setpgid(args[0], args[1]),
         GETPGID => sys_getpgid(args[0]),
         UNAME => sys_uname(args[0] as _),
@@ -135,7 +164,6 @@ pub fn syscall(id: usize, args: [usize; 6]) -> isize {
             __exit_curr_and_run_next(-10);
         }
     };
-    let curr_pid = curr_process().pid.0;
     match ret {
         Ok(ret) => {
             // 读入标准输入、写入标准输出、写入标准错误、INITPROC 和 shell 都不关心

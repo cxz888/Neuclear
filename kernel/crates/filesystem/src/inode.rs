@@ -83,7 +83,9 @@ bitflags! {
         /// 允许打开文件大小超过 32 位表示范围的大文件。在 64 位系统上此标志位应永远为真
         const O_LARGEFILE   = 1 << 15;
         /// 如果打开的文件不是目录，那么就返回失败
-        const O_DIRECTORY   = 1 << 16;
+        ///
+        /// FIXME: 在测试中，似乎 1 << 21 才被认为是 O_DIRECTORY；但 musl 似乎认为是 1 << 16
+        const O_DIRECTORY   = 1 << 21;
         // /// 如果路径的 basename 是一个符号链接，则打开失败并返回 `ELOOP`，目前不支持
         // const O_NOFOLLOW    = 1 << 17;
         // /// 读文件时不更新文件的 last access time，暂不支持
@@ -117,31 +119,11 @@ impl File for InodeFile {
     fn writable(&self) -> bool {
         self.writable
     }
-    fn read(&self, mut _buf: &mut [u8]) -> usize {
-        todo!()
-        // let mut inner = self.inner.exclusive_access();
-        // let mut total_read_size = 0usize;
-        // for slice in buf.buffers.iter_mut() {
-        //     let read_size = inner.entry.read_at(inner.offset, slice);
-        //     if read_size == 0 {
-        //         break;
-        //     }
-        //     inner.offset += read_size;
-        //     total_read_size += read_size;
-        // }
-        // total_read_size
+    fn read(&self, buf: &mut [u8]) -> usize {
+        self.inner.exclusive_access().entry.read(buf).unwrap()
     }
-    fn write(&self, _buf: &[u8]) -> usize {
-        todo!()
-        // let mut inner = self.inner.exclusive_access();
-        // let mut total_write_size = 0usize;
-        // for slice in buf.buffers.iter() {
-        //     let write_size = inner.inode.write_at(inner.offset, slice);
-        //     assert_eq!(write_size, slice.len());
-        //     inner.offset += write_size;
-        //     total_write_size += write_size;
-        // }
-        // total_write_size
+    fn write(&self, buf: &[u8]) -> usize {
+        self.inner.exclusive_access().entry.write(buf).unwrap()
     }
     fn set_close_on_exec(&self, bit: bool) {
         self.inner
@@ -179,9 +161,17 @@ impl File for InodeFile {
 pub fn open_inode(path: String, flags: OpenFlags) -> Result<InodeFile> {
     let (readable, writable) = flags.read_write();
     let mut curr = VIRTUAL_FS.root_dir();
-    let mut path_split = path.split('/');
+    if path == "/" {
+        return Ok(InodeFile::new(path, readable, writable, curr));
+    }
+    let mut path_split = if path.starts_with('/') {
+        path[1..].split('/')
+    } else {
+        path.split('/')
+    };
     // 能够完成这个循环说明该文件是存在的
     while let Some(name) = path_split.next() {
+        log::debug!("component name: {name}");
         match curr.find(&name) {
             Ok(Some(next)) => {
                 curr = next;
@@ -189,9 +179,11 @@ pub fn open_inode(path: String, flags: OpenFlags) -> Result<InodeFile> {
             Ok(None) => {
                 // 最后一节路径未找到，若有 O_CREAT 则创建；否则返回 ENOENT
                 if path_split.next().is_none() && flags.contains(OpenFlags::O_CREAT) {
+                    log::debug!("try create");
                     let file = curr.create(&name).unwrap();
                     return Ok(InodeFile::new(path, readable, writable, file));
                 } else {
+                    log::debug!("do nothing");
                     return Err(code::ENOENT);
                 }
             }

@@ -22,6 +22,12 @@ impl RecycleAllocator {
             recycled: Vec::new(),
         }
     }
+    pub const fn begin_with(begin: usize) -> Self {
+        RecycleAllocator {
+            current: begin,
+            recycled: Vec::new(),
+        }
+    }
     pub fn alloc(&mut self) -> usize {
         if let Some(id) = self.recycled.pop() {
             id
@@ -42,7 +48,7 @@ impl RecycleAllocator {
 }
 
 static PID_ALLOCATOR: UPSafeCell<RecycleAllocator> =
-    unsafe { UPSafeCell::new(RecycleAllocator::new()) };
+    unsafe { UPSafeCell::new(RecycleAllocator::begin_with(1)) };
 
 #[derive(Debug)]
 pub struct PidHandle(pub usize);

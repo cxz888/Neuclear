@@ -6,6 +6,8 @@
 
 由于开发人员都来自东北大学 (Neu)，因此化用为 Neuclear 作为队伍名称与系统名称
 
+项目文档见 doc 目录。
+
 ## VSCode 扩展建议
 
 - Even Better TOML
@@ -40,6 +42,7 @@
 一些第三方库，可能会需要做出修改来适应本项目的需求
 
 - rust-fatfs 库，做了点细微的修改
+- buddy_system_allocator 库，做了些小修改
 
 ### kernel
 

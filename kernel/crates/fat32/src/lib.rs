@@ -76,22 +76,32 @@ impl Entry for Fat32Entry {
         }
         Ok(files)
     }
-
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, VfsError> {
+        let Fat32Entry::File(file) = self else {
+            return Err(VfsError::InvalidType);
+        };
+        file.read(buf).map_err(VfsError::FsError)
+    }
     fn read_all(&mut self) -> Result<Vec<u8>, VfsError> {
-        let file = match self {
-            Fat32Entry::Dir(_) => return Err(VfsError::InvalidType),
-            Fat32Entry::File(file) => file,
+        let Fat32Entry::File(file) = self else {
+            return Err(VfsError::InvalidType);
         };
         // TODO: 想办法获取文件长度
         let mut ret = Vec::new();
         let mut buf = [0; BLOCK_SIZE as usize];
         let mut nread = usize::MAX;
         while nread != 0 {
-            nread = file.read(&mut buf).map_err(|e| VfsError::FsError(e))?;
+            nread = file.read(&mut buf).map_err(VfsError::FsError)?;
             ret.extend_from_slice(&buf[..nread])
         }
         // assert_eq!(ret.len(), size);
         Ok(ret)
+    }
+    fn write(&mut self, buf: &[u8]) -> Result<usize, VfsError> {
+        let Fat32Entry::File(file) = self else {
+            return Err(VfsError::InvalidType);
+        };
+        file.write(buf).map_err(VfsError::FsError)
     }
     /// 在目录下寻找一个条目。
     ///
