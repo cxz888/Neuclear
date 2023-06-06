@@ -125,7 +125,7 @@ pub fn syscall(id: usize, args: [usize; 6]) -> isize {
         NEWFSTAT => sys_fstat(args[0], args[1] as _),
         EXIT | EXIT_GROUP => sys_exit(args[0] as _),
         SET_TID_ADDRESS => sys_set_tid_address(args[0] as _),
-        SLEEP => sys_sleep(args[0]),
+        SLEEP => sys_sleep(args[0] as _),
         CLOCK_GETTIME => sys_clock_gettime(args[0] as _, args[1] as _),
         SCHED_YIELD => sys_yield(),
         SIGACTION => sys_sigaction(args[0], args[1] as _, args[2] as _),

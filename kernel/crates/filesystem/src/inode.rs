@@ -180,7 +180,12 @@ pub fn open_inode(path: String, flags: OpenFlags) -> Result<InodeFile> {
                 // 最后一节路径未找到，若有 O_CREAT 则创建；否则返回 ENOENT
                 if path_split.next().is_none() && flags.contains(OpenFlags::O_CREAT) {
                     log::debug!("try create");
-                    let file = curr.create(&name).unwrap();
+                    // NOTE: 用 O_DIRECTORY 来标记是否创建目录了，这是否语义不正确呢？
+                    let file = if flags.contains(OpenFlags::O_DIRECTORY) {
+                        curr.create_dir(&name).unwrap()
+                    } else {
+                        curr.create_file(&name).unwrap()
+                    };
                     return Ok(InodeFile::new(path, readable, writable, file));
                 } else {
                     log::debug!("do nothing");

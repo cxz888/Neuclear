@@ -31,7 +31,17 @@ pub fn sys_ioctl(fd: usize, cmd: usize, arg: usize) -> Result {
 }
 
 /// TODO: sys_mkdirat 完善目录
-pub fn sys_mkdirat(_dirfd: usize, _path: *const u8, _mode: usize) -> Result {
+pub fn sys_mkdirat(dirfd: usize, path: *const u8, mode: usize) -> Result {
+    let path = unsafe { check_cstr(path)? };
+
+    log::info!("mkdir {dirfd}, {path}, {mode:#o}");
+
+    let absolute_path = path_with_fd(dirfd, path.to_string())?;
+    let inode = open_file(absolute_path, OpenFlags::O_CREAT | OpenFlags::O_DIRECTORY)?;
+    let process = curr_process();
+    let mut inner = process.inner();
+    let fd = inner.alloc_fd();
+    inner.fd_table[fd] = Some(inode);
     Ok(0)
 }
 

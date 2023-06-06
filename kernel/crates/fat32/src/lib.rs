@@ -123,7 +123,7 @@ impl Entry for Fat32Entry {
         return Ok(None);
     }
     /// 创建文件，若已存在则只是打开
-    fn create(&self, name: &str) -> Result<Self, VfsError> {
+    fn create_file(&self, name: &str) -> Result<Self, VfsError> {
         let dir = match self {
             Fat32Entry::Dir(root) => root,
             Fat32Entry::File(_) => {
@@ -132,6 +132,19 @@ impl Entry for Fat32Entry {
         };
         match dir.create_file(name) {
             Ok(file) => Ok(Fat32Entry::File(file)),
+            Err(e) => Err(VfsError::FsError(e)),
+        }
+    }
+    /// 创建文件，若已存在则只是打开
+    fn create_dir(&self, name: &str) -> Result<Self, VfsError> {
+        let dir = match self {
+            Fat32Entry::Dir(root) => root,
+            Fat32Entry::File(_) => {
+                return Err(VfsError::InvalidType);
+            }
+        };
+        match dir.create_dir(name) {
+            Ok(dir) => Ok(Fat32Entry::Dir(dir)),
             Err(e) => Err(VfsError::FsError(e)),
         }
     }

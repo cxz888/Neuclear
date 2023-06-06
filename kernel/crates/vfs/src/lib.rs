@@ -31,7 +31,10 @@ pub trait Entry {
     fn find(&self, name: &str) -> Result<Option<Self>, Error<Self::FsError>>
     where
         Self: Sized;
-    fn create(&self, name: &str) -> Result<Self, Error<Self::FsError>>
+    fn create_file(&self, name: &str) -> Result<Self, Error<Self::FsError>>
+    where
+        Self: Sized;
+    fn create_dir(&self, name: &str) -> Result<Self, Error<Self::FsError>>
     where
         Self: Sized;
 
