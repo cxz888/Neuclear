@@ -35,7 +35,7 @@ endif
 
 build: env $(KERNEL_BIN)
 ifeq ($(MODE), test)
-	@cd bintool && cargo run --bin fs_init
+	# @cd bintool && cargo run --bin fs_init
 else
 	@make -C user build
 endif
