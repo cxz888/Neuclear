@@ -58,6 +58,7 @@ pub fn run_tasks() -> ! {
         let task = if let Some(existed_task) = fetch_task() {
             existed_task
         } else {
+            while !super::check_timer() {}
             loop {
                 let mut app_name = super::ALL_APPS
                     .exclusive_access()

@@ -39,7 +39,8 @@ pub fn add_timer(expire_ms: usize, thread: Arc<ThreadControlBlock>) {
     timers.push(TimerCondVar { expire_ms, thread });
 }
 
-pub fn check_timer() {
+/// 返回值表示在初赛测试中是否可以继续而非等待
+pub fn check_timer() -> bool {
     let current_ms = get_time_ms();
     let mut timers = TIMERS.exclusive_access();
     while let Some(timer) = timers.peek() {
@@ -50,4 +51,5 @@ pub fn check_timer() {
             break;
         }
     }
+    timers.is_empty()
 }
