@@ -20,7 +20,7 @@ pub mod code {
         };
     }
 
-    declare_err!(UNSUPPORTED, -114514, "暂时不支持该功能");
+    declare_err!(UNSUPPORTED, -1, "暂时不支持该功能");
     // TODO: delete Err TEMP
     declare_err!(TEMP, -1, "临时错误！代码修正完毕后应删除！");
     declare_err!(EPERM, -1, "Operation not permitted.");
