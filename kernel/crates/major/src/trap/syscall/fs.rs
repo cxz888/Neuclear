@@ -1,7 +1,10 @@
 //! File and filesystem-related syscalls
 
+use core::mem;
+
 use crate::task::{
-    check_cstr, check_ptr_mut, check_slice, check_slice_mut, curr_page_table, curr_process,
+    check_cstr, check_ptr, check_ptr_mut, check_slice, check_slice_mut, curr_page_table,
+    curr_process,
 };
 use alloc::{
     borrow::ToOwned,
@@ -249,28 +252,38 @@ pub fn sys_pipe2(filedes: *mut i32) -> Result {
 }
 
 #[repr(C)]
-#[allow(unused)]
-pub struct DirEnt {
+pub struct DirEnt64 {
     /// 索引结点号
-    d_ino: usize,
+    d_ino: u64,
     /// 到下一个 dirent 的偏移
-    d_off: isize,
+    d_off: i64,
     /// 当前 dirent 的长度
     d_reclen: u16,
     /// 文件类型
     d_type: u8,
+    /// 文件名
+    d_name: [u8; 0],
 }
 
 /// 获取目录项信息
 ///
-/// FIXME: 实现 getdents64
-pub fn sys_getdents64(fd: usize, _buf: *mut u8, _len: usize) -> Result {
+/// TODO: 完善 sys_getdents64，写文档
+pub fn sys_getdents64(fd: usize, mut buf: *mut u8, len: usize) -> Result {
     let process = curr_process();
     let inner = process.inner();
     let Some(Some(_dir)) = inner.fd_table.get(fd) else {
         return Err(code::EBADF);
     };
-    Err(code::UNSUPPORTED)
+    let mut offset = 0;
+    let curr_dir_entry = unsafe { check_ptr_mut(buf as *mut DirEnt64)? };
+    // TODO: d_ino 和 d_type 暂且不管
+    let entry_len = mem::size_of::<DirEnt64>() + 2;
+    curr_dir_entry.d_off = entry_len as _; // 2 是 ".\0" 的长度
+    curr_dir_entry.d_reclen = entry_len as _;
+    unsafe { *curr_dir_entry.d_name.as_mut_ptr().cast::<[u8; 2]>() = *b".\0" };
+    offset += entry_len;
+
+    Ok(offset as _)
 }
 
 /// 操控文件描述符
