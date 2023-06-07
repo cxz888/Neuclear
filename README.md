@@ -1,6 +1,8 @@
 # Neuclear
 
-基于 rCore，兼容 Linux，用 Rust 编写的操作系统。
+基于 rCore，兼容 Linux，用 Rust 编写的单一内核操作系统。
+
+可运行在 riscv64imac 环境下。
 
 名称化用自 Nuclear 即原子核，与内核 (kernel) 虽然在英文上没什么关联，但至少都带个核不是（）
 
@@ -45,8 +47,8 @@ vscode 调试用
 
 一些第三方库，可能会需要做出修改来适应本项目的需求
 
-- rust-fatfs 库，做了点细微的修改
-- buddy_system_allocator 库，做了些小修改
+- rust-fatfs 库，做了点细微的修改（添加 `pub` 和/或 `const`）
+- buddy_system_allocator 库，做了些小修改（主要是添加 `const`）
 
 ### doc
 
