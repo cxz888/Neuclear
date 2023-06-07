@@ -63,7 +63,7 @@ impl BlockCache {
 
     pub fn write(&mut self, offset: u32, buf: &[u8]) -> u32 {
         assert!(offset < BLOCK_SIZE);
-        if buf.len() != 0 {
+        if !buf.is_empty() {
             self.modified = true;
         }
         let nwrite = (BLOCK_SIZE - offset).min(buf.len() as u32);

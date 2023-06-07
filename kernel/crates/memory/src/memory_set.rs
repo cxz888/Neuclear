@@ -226,12 +226,12 @@ impl MemorySet {
             for area in self.areas.values() {
                 // 要控制住不溢出低地址空间的上限
                 if area.vpn_range.start > start
-                    && start.add(len) <= VirtPageNum(LOW_END >> PAGE_SIZE_BITS)
+                    && start + len <= VirtPageNum(LOW_END >> PAGE_SIZE_BITS)
                 {
                     // 找到可映射的段
-                    if start.add(len) <= area.vpn_range.start {
+                    if start + len <= area.vpn_range.start {
                         // TODO: 匿名映射的话，按照约定应当全部初始化为 0
-                        self.insert_framed_area(start, start.add(len), perm);
+                        self.insert_framed_area(start, start + len, perm);
                         return Ok(start.page_start().0 as isize);
                     }
                     start = area.vpn_range.end
@@ -366,6 +366,9 @@ impl MapArea {
     }
     pub fn len(&self) -> usize {
         self.vpn_range.end.0.saturating_sub(self.vpn_range.start.0) * PAGE_SIZE
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
     pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         let ppn;

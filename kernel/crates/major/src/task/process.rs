@@ -161,6 +161,7 @@ pub struct ProcessControlBlockInner {
     pub fd_table: Vec<Option<Arc<dyn File>>>,
     pub threads: Vec<Option<Arc<ThreadControlBlock>>>,
     pub thread_res_allocator: RecycleAllocator,
+    /// cwd 应当永远有着 `/xxx/yyy/` 的形式（包括 `/`)
     pub cwd: String,
 
     pub sig_handlers: SignalHandlers,
@@ -255,11 +256,11 @@ pub unsafe fn check_ptr<'a, T>(ptr: *const T) -> Result<&'a T> {
             return Ok(unsafe { &*ptr });
         }
     }
-    return Err(code::EFAULT);
+    Err(code::EFAULT)
 }
 
 /// 检查一个指向连续切片的指针（如字符串）的可读性以及是否有 U 标志
-/// 检查一个用户指针的可写性以及是否有 U 标记
+/// 检查一个用户指针的读写性以及是否有 U 标记
 ///
 /// TODO: 目前只检查了一页的有效性，如果结构体跨多页，则可能有问题
 #[track_caller]
@@ -267,15 +268,23 @@ pub unsafe fn check_ptr_mut<'a, T>(ptr: *mut T) -> Result<&'a mut T> {
     let va = VirtAddr::from(ptr);
     let pt = curr_page_table();
     if let Some(pte) = pt.find_pte(va.vpn()) {
-        if pte.flags().contains(PTEFlags::R | PTEFlags::U) {
+        if pte
+            .flags()
+            .contains(PTEFlags::R | PTEFlags::W | PTEFlags::U)
+        {
             return Ok(unsafe { &mut *ptr });
         }
     }
-    return Err(code::EFAULT);
+    Err(code::EFAULT)
 }
 
+/// 检查一个指向连续切片的指针（如字符串）的可读性以及是否有 U 标志
 ///
 /// TODO: 目前单纯是检查了下切片头部，未来可以根据长度计算是否跨等检查
+///
+/// # Safety
+///
+/// 需要用户保证 non-alias
 #[track_caller]
 pub unsafe fn check_slice<'a, T>(ptr: *const T, len: usize) -> Result<&'a [T]> {
     let va = VirtAddr::from(ptr);
@@ -285,27 +294,38 @@ pub unsafe fn check_slice<'a, T>(ptr: *const T, len: usize) -> Result<&'a [T]> {
             return Ok(unsafe { core::slice::from_raw_parts(ptr, len) });
         }
     }
-    return Err(code::EFAULT);
+    Err(code::EFAULT)
 }
 
-/// 检查一个指向连续切片的指针（如字符串）的可写性以及是否有 U 标志
+/// 检查一个指向连续切片的指针（如字符串）的读写性以及是否有 U 标志
 ///
 /// TODO: 目前单纯是检查了下切片头部，未来可以根据长度计算是否跨等检查
+///
+/// # Safety
+///
+/// 需要用户保证 non-alias
 #[track_caller]
 pub unsafe fn check_slice_mut<'a, T>(ptr: *mut T, len: usize) -> Result<&'a mut [T]> {
     let va = VirtAddr::from(ptr);
     let pt = curr_page_table();
     if let Some(pte) = pt.find_pte(va.vpn()) {
-        if pte.flags().contains(PTEFlags::R | PTEFlags::U) {
+        if pte
+            .flags()
+            .contains(PTEFlags::R | PTEFlags::W | PTEFlags::U)
+        {
             return Ok(unsafe { core::slice::from_raw_parts_mut(ptr, len) });
         }
     }
-    return Err(code::EFAULT);
+    Err(code::EFAULT)
 }
 
 /// 检查 null-terminated 的字符串指针（只读和 U 标志）
 ///
 /// TODO: 目前只检查了字符串开头，未来应当根据跨页检查
+///
+/// # Safety
+///
+/// 需要用户保证 non-alias
 #[track_caller]
 pub unsafe fn check_cstr<'a>(ptr: *const u8) -> Result<&'a str> {
     let va = VirtAddr::from(ptr);
@@ -315,5 +335,5 @@ pub unsafe fn check_cstr<'a>(ptr: *const u8) -> Result<&'a str> {
             return Ok(unsafe { core::ffi::CStr::from_ptr(ptr as _).to_str().unwrap() });
         }
     }
-    return Err(code::EFAULT);
+    Err(code::EFAULT)
 }

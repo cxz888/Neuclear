@@ -70,7 +70,7 @@ impl KernelStack {
     /// 返回内核空间中内核栈的高地址
     #[inline]
     pub fn high_addr(&self) -> usize {
-        kernel_ppn_to_vpn(self.0.ppn.add(self.0.num)).page_start().0
+        kernel_ppn_to_vpn(self.0.ppn + self.0.num).page_start().0
     }
     /// 返回内核空间中内核栈的 `TrapContext` 起始的位置，同时也是内核栈最初运行时实质上的栈顶
     #[inline]
@@ -98,11 +98,10 @@ impl ThreadUserRes {
     // 仅分配 tid，后续的用户资源需要自行调用相关函数
     pub fn new(process: &Arc<ProcessControlBlock>) -> Self {
         let tid = process.inner().alloc_tid();
-        let thread_user_res = Self {
+        Self {
             tid,
             process: Arc::downgrade(process),
-        };
-        thread_user_res
+        }
     }
 
     /// 分配用户空间所需的资源

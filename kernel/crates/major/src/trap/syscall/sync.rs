@@ -6,7 +6,7 @@ use utils::{
 
 pub fn sys_sleep(req: *const TimeSpec) -> Result {
     let req = unsafe { check_ptr(req) }?;
-    let expire_ms = get_time_ms() + req.sec * 1000 + req.nsec / 1000_000;
+    let expire_ms = get_time_ms() + req.sec * 1000 + req.nsec / 1_000_000;
     let thread = curr_task().unwrap();
     add_timer(expire_ms, thread);
     __block_curr_and_run_next();

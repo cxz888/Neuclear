@@ -29,6 +29,7 @@ pub trait File: Send + Sync {
     fn writable(&self) -> bool;
     fn read(&self, buf: &mut [u8]) -> usize;
     fn write(&self, buf: &[u8]) -> usize;
+    fn remove(&self, name: &str);
     fn set_close_on_exec(&self, _bit: bool) {}
     fn status(&self) -> OpenFlags {
         OpenFlags::empty()

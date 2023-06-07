@@ -3,16 +3,14 @@
 use core::mem;
 
 use crate::task::{
-    check_cstr, check_ptr, check_ptr_mut, check_slice, check_slice_mut, curr_page_table,
-    curr_process,
+    check_cstr, check_ptr_mut, check_slice, check_slice_mut, curr_page_table, curr_process,
 };
 use alloc::{
-    borrow::ToOwned,
     format,
     string::{String, ToString},
     sync::Arc,
 };
-use filesystem::{make_pipe, open_file, File, OpenFlags, Stat};
+use filesystem::{make_pipe, open_file, open_inode, File, OpenFlags, Stat};
 use memory::VirtAddr;
 use utils::error::{code, Result};
 
@@ -39,7 +37,7 @@ pub fn sys_mkdirat(dirfd: usize, path: *const u8, mode: usize) -> Result {
 
     log::info!("mkdir {dirfd}, {path}, {mode:#o}");
 
-    let absolute_path = path_with_fd(dirfd, path.to_string())?;
+    let absolute_path = path_with_fd(dirfd, path)?;
     let inode = open_file(absolute_path, OpenFlags::O_CREAT | OpenFlags::O_DIRECTORY)?;
     let process = curr_process();
     let mut inner = process.inner();
@@ -145,32 +143,31 @@ pub fn sys_writev(fd: usize, iovec: *const IoVec, vlen: usize) -> Result {
     Ok(total_write as isize)
 }
 
-fn path_with_fd(fd: usize, path_name: String) -> Result<String> {
+/// 返回一个绝对路径，它指向相对于 `fd` 的名为 `path_name` 的文件
+fn path_with_fd(fd: usize, path_name: &str) -> Result<String> {
     const AT_FDCWD: usize = -100isize as usize;
     // 绝对路径则忽视 fd
     if path_name.starts_with('/') {
-        return Ok(path_name);
+        return Ok(path_name.to_string());
     }
     let process = curr_process();
     let inner = process.inner();
     if fd == AT_FDCWD {
         if path_name == "." {
-            return Ok(inner.cwd.clone());
-        } else if path_name.starts_with("./") {
-            return Ok(format!("{}{}", inner.cwd, &path_name[2..]));
+            Ok(inner.cwd.clone())
+        } else if let Some(path_name) = path_name.strip_prefix("./") {
+            Ok(format!("{}{}", inner.cwd, path_name))
         } else {
-            return Ok(format!("{}{path_name}", inner.cwd));
+            Ok(format!("{}{path_name}", inner.cwd))
+        }
+    } else if let Some(Some(base)) = inner.fd_table.get(fd) {
+        if base.is_dir() {
+            Ok(format!("{}/{path_name}", base.path().unwrap().to_string()))
+        } else {
+            Err(code::ENOTDIR)
         }
     } else {
-        if let Some(Some(base)) = inner.fd_table.get(fd) {
-            if base.is_dir() {
-                return Ok(format!("{}/{path_name}", base.path().unwrap().to_string()));
-            } else {
-                return Err(code::ENOTDIR);
-            }
-        } else {
-            return Err(code::EBADF);
-        }
+        Err(code::EBADF)
     }
 }
 
@@ -213,7 +210,7 @@ pub fn sys_openat(dir_fd: usize, path_name: *const u8, flags: u32, mut _mode: u3
         return Err(code::TEMP);
     }
 
-    let absolute_path = path_with_fd(dir_fd, file_name.to_owned())?;
+    let absolute_path = path_with_fd(dir_fd, file_name)?;
     let inode = open_file(absolute_path, flags)?;
     let process = curr_process();
     let mut inner = process.inner();
@@ -268,7 +265,7 @@ pub struct DirEnt64 {
 /// 获取目录项信息
 ///
 /// TODO: 完善 sys_getdents64，写文档
-pub fn sys_getdents64(fd: usize, mut buf: *mut u8, len: usize) -> Result {
+pub fn sys_getdents64(fd: usize, buf: *mut u8, _len: usize) -> Result {
     let process = curr_process();
     let inner = process.inner();
     let Some(Some(_dir)) = inner.fd_table.get(fd) else {
@@ -282,6 +279,7 @@ pub fn sys_getdents64(fd: usize, mut buf: *mut u8, len: usize) -> Result {
     curr_dir_entry.d_reclen = entry_len as _;
     unsafe { *curr_dir_entry.d_name.as_mut_ptr().cast::<[u8; 2]>() = *b".\0" };
     offset += entry_len;
+    // 接下来应该接着遍历目录项，待后续实现
 
     Ok(offset as _)
 }
@@ -371,7 +369,7 @@ pub fn sys_fstatat(dir_fd: usize, file_name: *const u8, statbuf: *mut Stat, flag
     assert_eq!(flag, 0);
     let file_name = unsafe { check_cstr(file_name)? };
     log::info!("fstatat {dir_fd}, {file_name}");
-    let absolute_path = path_with_fd(dir_fd, file_name.to_string())?;
+    let absolute_path = path_with_fd(dir_fd, file_name)?;
     log::info!("absolute path: {absolute_path}");
 
     // TODO: 注意，可以尝试用 OpenFlags::O_PATH 打开试试
@@ -396,9 +394,30 @@ pub fn sys_fstat(fd: usize, kst: *mut Stat) -> Result {
     Ok(0)
 }
 
-pub fn sys_unlinkat(_name: *const u8) -> Result {
-    // FIXME: 尚未实现 sys_unlinkat
-    Err(code::UNSUPPORTED)
+/// 移除指定文件的链接（可用于删除文件）
+///
+/// 参数
+///
+/// TODO: 完善 sys_unlinkat，写文档
+pub fn sys_unlinkat(dirfd: usize, path: *const u8, _flags: u32) -> Result {
+    // TODO: path 相关的操作，不如引入 `unix_path` 这个库来解决？或者自己写个专门的 utils
+    let path = unsafe { check_cstr(path) }?;
+    let path = path_with_fd(dirfd, path)?;
+    let dir_path;
+    let base_name;
+    if path.ends_with('/') {
+        base_name = path[1..path.len() - 1].split('/').next_back().unwrap();
+        dir_path = &path[..path.len() - base_name.len() - 1];
+    } else {
+        base_name = path[1..].split('/').next_back().unwrap();
+        dir_path = &path[..path.len() - base_name.len()];
+    }
+    let inode = open_inode(
+        dir_path.to_string(),
+        OpenFlags::O_WRONLY | OpenFlags::O_DIRECTORY,
+    )?;
+    inode.remove(base_name);
+    Ok(0)
 }
 
 pub fn sys_linkat(_old_name: *const u8, _new_name: *const u8) -> Result {

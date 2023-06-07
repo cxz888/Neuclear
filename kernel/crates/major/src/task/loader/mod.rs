@@ -155,7 +155,7 @@ impl Loader {
         assert_eq!(elf.header.e_machine, 243);
         log::info!("entry point: {:#x}", elf.entry);
 
-        let (_elf_base, elf_end) = load_sections(&elf, &elf_data, &mut pcb.memory_set);
+        let (_elf_base, elf_end) = load_sections(&elf, elf_data, &mut pcb.memory_set);
 
         // program break 紧挨在 ELF 数据之后，并在之后向高地址增长
         pcb.brk = elf_end;

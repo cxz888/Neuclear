@@ -101,7 +101,7 @@ pub fn syscall(id: usize, args: [usize; 6]) -> isize {
         FCNTL64 => sys_fcntl64(args[0], args[1], args[2]),
         IOCTL => sys_ioctl(args[0], args[1], args[2]),
         MKDIRAT => sys_mkdirat(args[0], args[1] as _, args[2]),
-        UNLINKAT => sys_unlinkat(args[1] as _),
+        UNLINKAT => sys_unlinkat(args[0], args[1] as _, args[2] as _),
         LINKAT => sys_linkat(args[1] as _, args[3] as _),
         UMOUNT => sys_umount(args[0] as _, args[1] as _),
         MOUNT => sys_mount(

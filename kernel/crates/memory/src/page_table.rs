@@ -6,7 +6,7 @@ use super::{
     frame_alloc, kernel_ppn_to_vpn, FrameTracker, MapPermission, PhysAddr, PhysPageNum, VirtAddr,
     VirtPageNum,
 };
-use alloc::{string::String, vec, vec::Vec};
+use alloc::{vec, vec::Vec};
 use bitflags::*;
 use riscv::register::satp;
 use utils::{
@@ -102,14 +102,20 @@ impl PageTable {
             }
         }
     }
+    /// # Safety
+    ///
     /// 请自行保证 non-alias
     pub unsafe fn root_pte(&self, line: usize) -> &PageTableEntry {
         &kernel_ppn_to_vpn(self.root_ppn).as_page_ptes()[line]
     }
+    /// # Safety
+    ///
     /// 请自行保证 non-alias
     pub unsafe fn root_pte_mut(&mut self, line: usize) -> &mut PageTableEntry {
         &mut kernel_ppn_to_vpn(self.root_ppn).as_page_ptes_mut()[line]
     }
+    /// # Safety
+    ///
     /// 请自行保证 non-alias
     pub unsafe fn root_page(&mut self) -> &mut [u8; PAGE_SIZE] {
         kernel_ppn_to_vpn(self.root_ppn).as_page_bytes_mut()
@@ -176,123 +182,19 @@ impl PageTable {
     pub fn trans_va_to_pa(&self, va: VirtAddr) -> Option<PhysAddr> {
         self.find_pte(va.vpn_floor()).map(|pte| {
             let aligned_pa = pte.ppn().page_start();
-            aligned_pa.add(va.page_offset())
+            aligned_pa + va.page_offset()
         })
     }
     /// 将用户指针转换到内核的虚拟地址。
-    ///
-    /// TODO: 废弃该函数
     #[inline]
     #[track_caller]
     pub fn trans_va(&self, va: VirtAddr) -> Result<VirtAddr> {
-        self.trans_va_to_pa(VirtAddr::from(va))
-            .map(|pa| kernel_pa_to_va(pa))
+        self.trans_va_to_pa(va)
+            .map(kernel_pa_to_va)
             .ok_or(code::EFAULT)
     }
     #[inline]
     pub fn token(&self) -> usize {
         (satp::Mode::Sv39 as usize) << 60 | self.root_ppn.0
     }
-    /// 需要保证 `ptr` 指向合法的、空终止的字符串
-    ///
-    /// TODO: 废弃该函数
-    pub unsafe fn trans_str(&self, mut ptr: *const u8) -> Result<String> {
-        let mut string = Vec::new();
-        // 逐字节地读入字符串，效率较低，但因为字符串可能跨页存在需要如此。
-        // NOTE: 可以进一步优化，如一次读一页等
-        loop {
-            let ch: u8 = *(self.trans_va(ptr.into())?.as_ref());
-            if ch == 0 {
-                break;
-            } else {
-                string.push(ch);
-                ptr = ptr.add(1);
-            }
-        }
-        String::from_utf8(string).map_err(|_| code::EINVAL)
-    }
-    /// 最好保证 non-alias。不过一般是用户 buffer
-    ///
-    /// TODO: 废弃该函数
-    pub unsafe fn trans_byte_buffer(&mut self, ptr: *mut u8, len: usize) -> Result<Vec<&mut [u8]>> {
-        let mut start = VirtAddr::from(ptr);
-        let end = start.add(len);
-        let mut v = Vec::with_capacity(len / PAGE_SIZE + 2);
-        while start < end {
-            let mut vpn = start.vpn();
-            let ppn = self.translate(vpn).ok_or(code::EFAULT)?;
-            vpn.0 += 1;
-            let mut seg_end = vpn.page_start();
-            seg_end = seg_end.min(end);
-            if seg_end.page_offset() == 0 {
-                v.push(&mut kernel_ppn_to_vpn(ppn).as_page_bytes_mut()[start.page_offset()..]);
-            } else {
-                v.push(
-                    &mut kernel_ppn_to_vpn(ppn).as_page_bytes_mut()
-                        [start.page_offset()..seg_end.page_offset()],
-                );
-            }
-            start = seg_end;
-        }
-        Ok(v)
-    }
 }
-
-// TODO: delete UserBuffer
-// /// An abstraction over a buffer passed from user space to kernel space
-// #[derive(Debug)]
-// pub struct UserBuffer<'a> {
-//     pub buffers: Vec<&'a mut [u8]>,
-// }
-
-// impl<'a> UserBuffer<'a> {
-//     /// Constuct a UserBuffer
-//     pub fn new(buffers: Vec<&'a mut [u8]>) -> Self {
-//         Self { buffers }
-//     }
-//     /// Get the length of a UserBuffer
-//     pub fn len(&self) -> usize {
-//         let mut total: usize = 0;
-//         for b in self.buffers.iter() {
-//             total += b.len();
-//         }
-//         total
-//     }
-// }
-
-// impl<'a> IntoIterator for UserBuffer<'a> {
-//     type Item = *mut u8;
-//     type IntoIter = UserBufferIterator<'a>;
-//     fn into_iter(self) -> Self::IntoIter {
-//         UserBufferIterator {
-//             buffers: self.buffers,
-//             current_buffer: 0,
-//             current_idx: 0,
-//         }
-//     }
-// }
-
-// // An iterator over a UserBuffer
-// pub struct UserBufferIterator<'a> {
-//     buffers: Vec<&'a mut [u8]>,
-//     current_buffer: usize,
-//     current_idx: usize,
-// }
-
-// impl Iterator for UserBufferIterator<'_> {
-//     type Item = *mut u8;
-//     fn next(&mut self) -> Option<Self::Item> {
-//         if self.current_buffer >= self.buffers.len() {
-//             None
-//         } else {
-//             let r = &mut self.buffers[self.current_buffer][self.current_idx] as *mut _;
-//             if self.current_idx + 1 == self.buffers[self.current_buffer].len() {
-//                 self.current_idx = 0;
-//                 self.current_buffer += 1;
-//             } else {
-//                 self.current_idx += 1;
-//             }
-//             Some(r)
-//         }
-//     }
-// }

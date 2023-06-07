@@ -71,7 +71,7 @@ impl Entry for Fat32Entry {
 
         let mut files = Vec::new();
         for entry in dir.iter() {
-            let entry = entry.map_err(|e| VfsError::FsError(e))?;
+            let entry = entry.map_err(VfsError::FsError)?;
             files.push(entry.file_name())
         }
         Ok(files)
@@ -103,6 +103,12 @@ impl Entry for Fat32Entry {
         };
         file.write(buf).map_err(VfsError::FsError)
     }
+    fn remove(&self, name: &str) -> Result<(), VfsError> {
+        let Fat32Entry::Dir(dir) = self else {
+            return Err(VfsError::InvalidType);
+        };
+        dir.remove(name).map_err(VfsError::FsError)
+    }
     /// 在目录下寻找一个条目。
     ///
     /// 若当前节点不是目录，或者寻找过程中发生底层错误，则返回错误
@@ -111,7 +117,7 @@ impl Entry for Fat32Entry {
             return Err(VfsError::InvalidType);
         };
         for entry in dir.iter() {
-            let entry = entry.map_err(|e| VfsError::FsError(e))?;
+            let entry = entry.map_err(VfsError::FsError)?;
             if entry.file_name() == name {
                 if entry.is_dir() {
                     return Ok(Some(Fat32Entry::Dir(entry.to_dir())));
@@ -120,7 +126,7 @@ impl Entry for Fat32Entry {
                 }
             }
         }
-        return Ok(None);
+        Ok(None)
     }
     /// 创建文件，若已存在则只是打开
     fn create_file(&self, name: &str) -> Result<Self, VfsError> {
@@ -151,7 +157,7 @@ impl Entry for Fat32Entry {
     /// 清空文件内容，或者说截断到 0
     fn clear(&mut self) -> bool {
         match self {
-            Fat32Entry::Dir(_) => return false,
+            Fat32Entry::Dir(_) => false,
             Fat32Entry::File(file) => {
                 file.seek(SeekFrom::Start(0)).unwrap();
                 file.truncate().is_ok()

@@ -51,7 +51,6 @@ pub struct PipeRingBuffer {
 }
 
 impl PipeRingBuffer {
-    #[allow(unused)]
     pub fn new() -> Self {
         Self {
             arr: [0; RING_BUFFER_SIZE],
@@ -101,6 +100,12 @@ impl PipeRingBuffer {
     }
 }
 
+impl Default for PipeRingBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// 返回 (read_end, write_end)
 pub fn make_pipe() -> (Arc<Pipe>, Arc<Pipe>) {
     let buffer = unsafe { Arc::new(UPSafeCell::new(PipeRingBuffer::new())) };
@@ -119,7 +124,7 @@ impl File for Pipe {
     }
     fn read(&self, buf: &mut [u8]) -> usize {
         assert!(self.readable());
-        let mut buf_iter = buf.into_iter();
+        let mut buf_iter = buf.iter_mut();
         let mut read_size = 0usize;
         loop {
             let mut ring_buffer = self.buffer.exclusive_access();
@@ -146,7 +151,7 @@ impl File for Pipe {
     }
     fn write(&self, buf: &[u8]) -> usize {
         assert!(self.writable());
-        let mut buf_iter = buf.into_iter();
+        let mut buf_iter = buf.iter();
         let mut write_size = 0usize;
         loop {
             let mut ring_buffer = self.buffer.exclusive_access();
@@ -176,5 +181,8 @@ impl File for Pipe {
             st_blksize: BLOCK_SIZE,
             ..Default::default()
         }
+    }
+    fn remove(&self, _name: &str) {
+        panic!("pipe cannot remove");
     }
 }

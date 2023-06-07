@@ -31,6 +31,10 @@
 
 ## 项目结构说明
 
+### .vscode
+
+vscode 调试用
+
 ### bintool
 
 放一些调试用的工具，像是探查 elf 内容，打包 elf 之类的。
@@ -44,6 +48,10 @@
 - rust-fatfs 库，做了点细微的修改
 - buddy_system_allocator 库，做了些小修改
 
+### doc
+
+项目的一些文档。分模块讲解了 Neuclear 的整体设计和实现方式。
+
 ### kernel
 
 内核部分，会编译得到内核的二进制文件
@@ -51,12 +59,6 @@
 ### res
 
 参考资料；系统镜像；BootLoader 之类的。总之是一些相关的资源
-
-由于 git 不适合存放二进制资源，其内容我会打包上传
-
-### testsuits-for-oskernel
-
-似乎是去年决赛的测试样例？
 
 ### user
 

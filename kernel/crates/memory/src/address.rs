@@ -1,5 +1,5 @@
 use super::page_table::PageTableEntry;
-use core::iter::Step;
+use core::{iter::Step, ops::Add};
 use utils::config::{PAGE_SIZE, PAGE_SIZE_BITS, PTE_PER_PAGE};
 
 /// 物理地址。在 Sv39 页表机制中，虚拟地址转化得到的物理地址总共为 56 位，其中页号 44 位，页内偏移 12 位。
@@ -19,8 +19,12 @@ impl PhysAddr {
     pub const fn ppn(&self) -> PhysPageNum {
         self.floor()
     }
-    pub fn add(self, offset: usize) -> Self {
-        Self(self.0 + offset)
+}
+
+impl Add<usize> for PhysAddr {
+    type Output = Self;
+    fn add(self, rhs: usize) -> Self::Output {
+        Self(self.0 + rhs)
     }
 }
 
@@ -32,8 +36,12 @@ impl PhysPageNum {
     pub fn page_start(self) -> PhysAddr {
         PhysAddr(self.0 << PAGE_SIZE_BITS)
     }
-    pub fn add(self, num_page: usize) -> Self {
-        Self(self.0 + num_page)
+}
+
+impl Add<usize> for PhysPageNum {
+    type Output = Self;
+    fn add(self, rhs: usize) -> Self::Output {
+        Self(self.0 + rhs)
     }
 }
 
@@ -80,10 +88,14 @@ impl VirtAddr {
     pub const fn add(&self, offset: usize) -> Self {
         Self(self.0 + offset)
     }
+    /// # Safety
+    ///
     /// 需要保证该地址转化为 T 后内容合法
     pub unsafe fn as_ref<T>(&self) -> &'static T {
         (self.0 as *const T).as_ref().unwrap()
     }
+    /// # Safety
+    ///
     /// 需要保证该地址转化为 T 后内容合法
     pub unsafe fn as_mut<T>(&mut self) -> &'static mut T {
         (self.0 as *mut T).as_mut().unwrap()
@@ -120,32 +132,46 @@ impl VirtPageNum {
     pub fn page_start(&self) -> VirtAddr {
         VirtAddr(self.0 << PAGE_SIZE_BITS)
     }
-    pub fn add(self, len: usize) -> Self {
-        Self(self.0 + len)
-    }
+    /// # Safety
+    ///
     /// 需要确保该页确实存放页表
     pub unsafe fn as_page_ptes(&self) -> &'static [PageTableEntry; PTE_PER_PAGE] {
         self.page_start().as_ref()
     }
+    /// # Safety
+    ///
     /// 需要确保该页确实存放页表
     pub unsafe fn as_page_ptes_mut(&mut self) -> &'static mut [PageTableEntry; PTE_PER_PAGE] {
         self.page_start().as_mut()
     }
+    /// # Safety
+    ///
     /// 任何页都可以转化为字节数组。但可能造成 alias，所以先标为 `unsafe`
     pub unsafe fn as_page_bytes(&self) -> &'static [u8; PAGE_SIZE] {
         self.page_start().as_ref()
     }
+    /// # Safety
+    ///
     /// 任何页都可以转化为字节数组。但可能造成 alias，所以先标为 `unsafe`
     pub unsafe fn as_page_bytes_mut(&mut self) -> &'static mut [u8; PAGE_SIZE] {
         self.page_start().as_mut()
     }
     /// 将 `src` 中的数据复制到该页中。
     ///
+    /// # Safety
+    ///
     /// 需要保证 `src` 与该页不相交
     pub unsafe fn copy_from(&mut self, offset: usize, src: &[u8]) {
         let va = self.page_start();
         let dst = core::slice::from_raw_parts_mut(va.add(offset).0 as *mut u8, src.len());
         dst.copy_from_slice(src);
+    }
+}
+
+impl Add<usize> for VirtPageNum {
+    type Output = Self;
+    fn add(self, len: usize) -> Self::Output {
+        Self(self.0 + len)
     }
 }
 

@@ -102,3 +102,9 @@ impl VirtIOBlock {
         }
     }
 }
+
+impl Default for VirtIOBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}

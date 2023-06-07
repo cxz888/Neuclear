@@ -47,6 +47,10 @@ impl File for Stdin {
             ..Default::default()
         }
     }
+
+    fn remove(&self, _name: &str) {
+        panic!("stdin cannot remove");
+    }
 }
 
 impl File for Stdout {
@@ -72,5 +76,8 @@ impl File for Stdout {
             st_blksize: BLOCK_SIZE,
             ..Default::default()
         }
+    }
+    fn remove(&self, _name: &str) {
+        panic!("stdout cannot remove");
     }
 }

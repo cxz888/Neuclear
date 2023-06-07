@@ -112,6 +112,7 @@ impl OpenFlags {
     }
 }
 
+// TODO: 现在是什么方法都往 File 里面塞，感觉不好，未来要不要弄个 Any 之类的进行 downcast
 impl File for InodeFile {
     fn readable(&self) -> bool {
         self.readable
@@ -136,6 +137,9 @@ impl File for InodeFile {
     }
     fn is_dir(&self) -> bool {
         self.inner.exclusive_access().entry.is_dir()
+    }
+    fn remove(&self, name: &str) {
+        self.inner.exclusive_access().entry.remove(name).unwrap();
     }
     fn path(&self) -> Option<&str> {
         Some(&self.path)
@@ -164,15 +168,11 @@ pub fn open_inode(path: String, flags: OpenFlags) -> Result<InodeFile> {
     if path == "/" {
         return Ok(InodeFile::new(path, readable, writable, curr));
     }
-    let mut path_split = if path.starts_with('/') {
-        path[1..].split('/')
-    } else {
-        path.split('/')
-    };
+    let mut path_split = path.strip_prefix('/').unwrap_or(&path).split('/');
     // 能够完成这个循环说明该文件是存在的
     while let Some(name) = path_split.next() {
         log::debug!("component name: {name}");
-        match curr.find(&name) {
+        match curr.find(name) {
             Ok(Some(next)) => {
                 curr = next;
             }
@@ -182,9 +182,9 @@ pub fn open_inode(path: String, flags: OpenFlags) -> Result<InodeFile> {
                     log::debug!("try create");
                     // NOTE: 用 O_DIRECTORY 来标记是否创建目录了，这是否语义不正确呢？
                     let file = if flags.contains(OpenFlags::O_DIRECTORY) {
-                        curr.create_dir(&name).unwrap()
+                        curr.create_dir(name).unwrap()
                     } else {
-                        curr.create_file(&name).unwrap()
+                        curr.create_file(name).unwrap()
                     };
                     return Ok(InodeFile::new(path, readable, writable, file));
                 } else {
