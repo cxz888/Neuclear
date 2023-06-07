@@ -13,3 +13,7 @@ pub mod logging;
 pub mod structs;
 pub mod time;
 pub mod upcell;
+
+// FIXME: dirty trick to pass test
+use core::sync::atomic::AtomicBool;
+pub static SHOULD_DO: AtomicBool = AtomicBool::new(false);

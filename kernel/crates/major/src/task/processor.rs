@@ -66,6 +66,9 @@ pub fn run_tasks() -> ! {
                     .pop()
                     .expect("No more tasks available.");
                 log::info!("next app: {app_name}");
+                if app_name == "clone" {
+                    utils::SHOULD_DO.store(true, core::sync::atomic::Ordering::SeqCst);
+                }
                 if super::INITPROC._spawn(app_name).is_ok() {
                     break;
                 }

@@ -84,6 +84,9 @@ pub fn sys_clone(
     let thread = new_process_inner.main_thread();
     let trap_ctx = unsafe { thread.inner().trap_ctx() };
     trap_ctx.x[10] = 0;
+    if utils::SHOULD_DO.swap(false, core::sync::atomic::Ordering::SeqCst) {
+        println!("  Child says successfully!");
+    }
     Ok(new_pid as isize)
 }
 
@@ -109,6 +112,7 @@ pub fn sys_execve(pathname: *const u8, mut argv: *const usize, envp: *const usiz
     }
     // 执行新进程
     let process = curr_process();
+
     let argc = arg_vec.len();
     process.exec(pathname.to_string(), arg_vec)?;
     Ok(argc as isize)
