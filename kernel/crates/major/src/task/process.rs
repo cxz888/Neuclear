@@ -43,6 +43,7 @@ impl ProcessControlBlock {
     }
 
     pub fn from_path(path: String, args: Vec<String>) -> Result<Arc<Self>> {
+        // FIXME: 这里有个小坑，pcb 析构时，强计数归零了，然后内部的 main_thread 析构又需要 upgrade()，就会出问题
         let pcb = ProcessControlBlock::new();
         {
             let mut pcb_inner = pcb.inner();
@@ -199,10 +200,6 @@ impl ProcessControlBlockInner {
 
     pub fn main_thread(&self) -> Arc<ThreadControlBlock> {
         self.threads[0].as_ref().cloned().unwrap()
-    }
-
-    pub fn thread_ref(&self, tid: usize) -> Option<&ThreadControlBlock> {
-        self.threads[tid].as_deref()
     }
 
     /// 设置用户堆顶。失败返回原来的 brk，成功则返回新的 brk

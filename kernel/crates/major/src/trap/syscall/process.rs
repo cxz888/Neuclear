@@ -326,8 +326,7 @@ pub fn sys_mmap(addr: usize, len: usize, prot: u32, flags: u32, fd: i32, offset:
 }
 
 pub fn sys_munmap(_addr: usize, _len: usize) -> Result {
-    // todo!()
-    Ok(0)
+    Err(code::UNSUPPORTED)
 }
 
 pub fn sys_spawn(_path: *const u8) -> Result {

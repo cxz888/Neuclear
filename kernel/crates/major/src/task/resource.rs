@@ -120,6 +120,8 @@ impl ThreadUserRes {
 
     /// 释放用户资源
     fn dealloc_user_res(&self) {
+        // 一般来说 upgrade() 是没问题的，只有极特殊的情况会有问题
+        // 不过没关系，那样的情况下，进程一般都退出了，也会自动清理掉映射
         let Some(process) = self.process.upgrade() else {
             return;
         };

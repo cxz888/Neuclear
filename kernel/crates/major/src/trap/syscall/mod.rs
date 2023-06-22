@@ -77,8 +77,7 @@ declare_syscall_id!(
     EXECVE, 221,
     MMAP, 222,
     WAIT4, 260,
-    SPAWN, 400,
-    WAITTID, 462
+    SPAWN, 400
 );
 
 /// handle syscall exception with `id` and other arguments
@@ -145,7 +144,6 @@ pub fn syscall(id: usize, args: [usize; 6]) -> isize {
         EXECVE => sys_execve(args[0] as _, args[1] as _, args[2] as _),
         WAIT4 => sys_wait4(args[0] as _, args[1] as _, args[2], args[3]),
         GET_TIME => sys_get_time_of_day(args[0] as _, args[1]),
-        // MUNMAP => sys_munmap(args[0], args[1]),
         MMAP => sys_mmap(
             args[0],
             args[1],
@@ -155,7 +153,6 @@ pub fn syscall(id: usize, args: [usize; 6]) -> isize {
             args[5],
         ),
         SPAWN => sys_spawn(args[0] as _),
-        WAITTID => sys_waittid(args[0]),
         _ => {
             log::error!("[kernel] Unsupport inst pc = {:#x}", unsafe {
                 curr_trap_ctx().sepc

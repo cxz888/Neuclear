@@ -101,7 +101,7 @@ vscode 方式也差不多，要手动在调试窗口加个 `break *0x8020001a` �
 - [ ] 信号机制。目前还没有具体的处理。
 - [ ] 标记 `unsafe`。这里的阻碍是我不太敢对 `unsafe` 乱下手，可能还得花时间看死灵书
 - [ ] 多核启动
-- [ ] 需要探索的：如何做内核 profile、页表中的 ASID、D/A/G 位
+- [ ] 需要探索的：如何做内核 profile、页表中的 ASID、D/A/G 位、能否用 riscv64gc Linux musl 来试试、链接 musl 集成 libc
 
 ## 注意事项
 

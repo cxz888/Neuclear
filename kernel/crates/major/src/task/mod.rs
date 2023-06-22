@@ -72,7 +72,6 @@ pub extern "C" fn __exit_curr_and_run_next(exit_code: i32) -> ! {
     drop(task);
 
     // 此处暂不释放线程，因为当前仍在使用它的内核栈
-    // 当 `sys_waittid` 被调用时，它的资源才会被回收
 
     // 主线程退出，则回收所有进程资源
     if tid == 0 {

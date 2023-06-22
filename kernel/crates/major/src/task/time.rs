@@ -45,7 +45,11 @@ pub fn check_timer() -> bool {
     let mut timers = TIMERS.exclusive_access();
     while let Some(timer) = timers.peek() {
         if timer.expire_ms <= current_ms {
-            add_task(Arc::clone(&timer.thread));
+            // 防止睡眠期间进程已经退出了
+            // TODO: 但这也就意味着可能有线程是在进程退出时未被销毁的，是否要修改？
+            if timer.thread.process.strong_count() > 0 {
+                add_task(Arc::clone(&timer.thread));
+            }
             timers.pop();
         } else {
             break;
