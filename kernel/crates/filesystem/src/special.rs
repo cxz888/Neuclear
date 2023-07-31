@@ -1,4 +1,4 @@
-use core::{cell::Cell, ops::AddAssign};
+use core::ops::AddAssign;
 
 use utils::upcell::UPSafeCell;
 
@@ -35,11 +35,11 @@ impl File for Passwd {
         return len;
     }
 
-    fn write(&self, buf: &[u8]) -> usize {
+    fn write(&self, _buf: &[u8]) -> usize {
         panic!("Should not write passwd");
     }
 
-    fn remove(&self, name: &str) {
+    fn remove(&self, _name: &str) {
         todo!()
     }
 
