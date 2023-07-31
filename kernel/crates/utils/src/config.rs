@@ -1,6 +1,6 @@
 pub const PTR_SIZE: usize = core::mem::size_of::<usize>();
 const KB: usize = 1024;
-const MB: usize = 1024 * 1024;
+const MB: usize = 1024 * KB;
 
 /// 物理内存的末端
 pub const MEMORY_END: usize = 0x8800_0000;
@@ -26,6 +26,7 @@ pub const PTE_PER_PAGE: usize = PAGE_SIZE / PTR_SIZE;
 /// 地址空间的最后一个字节
 pub const ADDR_END: usize = usize::MAX;
 
+/// 用户栈的大小
 pub const USER_STACK_SIZE: usize = 8 * KB;
 
 /// mmap 开始寻找可映射段的起点，即低地址的 128GiB 处

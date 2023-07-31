@@ -2,6 +2,7 @@
 
 mod inode;
 mod pipe;
+mod special;
 mod stdio;
 
 extern crate alloc;
@@ -10,6 +11,7 @@ extern crate utils;
 
 pub use inode::{open_inode, InodeFile, OpenFlags, VIRTUAL_FS};
 pub use pipe::{make_pipe, Pipe};
+use special::Passwd;
 pub use stdio::{Stdin, Stdout};
 
 use alloc::{string::String, sync::Arc};
@@ -135,6 +137,8 @@ pub fn open_file(path: String, flags: OpenFlags) -> Result<Arc<dyn File>> {
             "/dev/tty" => return Ok(Arc::new(Stdout)),
             _ => return Err(code::ENOENT),
         }
+    } else if path == "/etc/passwd" {
+        return Ok(Arc::new(Passwd::new()));
     }
     let inode = open_inode(path, flags)?;
     Ok(Arc::new(inode))

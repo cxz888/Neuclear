@@ -188,7 +188,6 @@ pub fn open_inode(path: String, flags: OpenFlags) -> Result<InodeFile> {
                     };
                     return Ok(InodeFile::new(path, readable, writable, file));
                 } else {
-                    log::debug!("do nothing");
                     return Err(code::ENOENT);
                 }
             }

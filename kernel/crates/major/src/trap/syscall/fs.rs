@@ -90,6 +90,7 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> Result {
 }
 
 #[repr(C)]
+#[derive(Debug)]
 pub struct IoVec {
     iov_base: *mut u8,
     iov_len: usize,
@@ -129,7 +130,9 @@ pub fn sys_readv(fd: usize, iovec: *const IoVec, vlen: usize) -> Result {
 /// - `iovec` 指定 `IoVec` 数组
 /// - `vlen` 指定数组的长度
 pub fn sys_writev(fd: usize, iovec: *const IoVec, vlen: usize) -> Result {
+    log::info!("fd: {fd}, vlen: {vlen}");
     let iovec = unsafe { check_slice(iovec, vlen)? };
+    log::info!("iovec: {iovec:x?}");
     let file = prepare_io(fd, true)?;
     let mut total_write = 0;
     for iov in iovec {
@@ -188,10 +191,10 @@ pub fn sys_openat(dir_fd: usize, path_name: *const u8, flags: u32, mut _mode: u3
 
     let Some(flags) = OpenFlags::from_bits(flags) else {
         log::error!("open flags: {flags:#b}");
-        log::error!("open flags: {:#b}",OpenFlags::O_DIRECTORY.bits());
+        log::error!("open flags: {:#b}", OpenFlags::O_DIRECTORY.bits());
         return Err(code::TEMP);
     };
-    log::info!("oepnat {dir_fd}, {file_name}, {flags:?}");
+    log::info!("openat {dir_fd}, {file_name}, {flags:?}");
     // 不是创建文件（以及临时文件）时，mode 被忽略
     if !flags.contains(OpenFlags::O_CREAT) {
         // TODO: 暂时在测试中忽略
@@ -298,7 +301,7 @@ pub fn sys_fcntl64(fd: usize, cmd: usize, arg: usize) -> Result {
 
     let process = curr_process();
     let mut inner = process.inner();
-    let Some(Some(file))=inner.fd_table.get(fd) else {
+    let Some(Some(file)) = inner.fd_table.get(fd) else {
         return Err(code::EBADF);
     };
     match cmd {
@@ -386,7 +389,7 @@ pub fn sys_fstat(fd: usize, kst: *mut Stat) -> Result {
     let kst = unsafe { check_ptr_mut(kst)? };
     let process = curr_process();
     let inner = process.inner();
-    let Some(Some(file)) =inner.fd_table.get(fd) else {
+    let Some(Some(file)) = inner.fd_table.get(fd) else {
         return Err(code::EBADF);
     };
     *kst = file.fstat();

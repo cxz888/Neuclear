@@ -64,12 +64,12 @@ pub fn sys_clone(
     }
     // 参考 https://man7.org/linux/man-pages/man2/clone.2.html，低 8 位是 exit_signal，其余是 clone flags
     let Some(clone_flags) = CloneFlags::from_bits((flags as u32) & !0xff) else {
-        log::error!("未定义的 Clone Flags：{:#b}",flags & !0xff);
+        log::error!("未定义的 Clone Flags：{:#b}", flags & !0xff);
         return Err(code::TEMP);
     };
     // TODO: 完成 exit_signal
     let Ok(_exit_signal) = Signal::try_from(flags as u8) else {
-        log::error!("未定义的信号：{:#b}",flags as u8);
+        log::error!("未定义的信号：{:#b}", flags as u8);
         return Err(code::TEMP);
     };
     if !clone_flags.is_empty() {
@@ -84,9 +84,6 @@ pub fn sys_clone(
     let thread = new_process_inner.main_thread();
     let trap_ctx = unsafe { thread.inner().trap_ctx() };
     trap_ctx.x[10] = 0;
-    if utils::SHOULD_DO.swap(false, core::sync::atomic::Ordering::SeqCst) {
-        println!("  Child says successfully!");
-    }
     Ok(new_pid as isize)
 }
 

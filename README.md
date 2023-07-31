@@ -31,6 +31,8 @@
 
 <https://tooldiy.ry.rs/firmware/RustSBI/>
 
+<https://gitlab.eduxiji.net/scPointer/maturin>
+
 ## 项目结构说明
 
 ### .vscode
